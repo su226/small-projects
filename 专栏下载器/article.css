@@ -1,0 +1,208 @@
+*, ::before, ::after {
+  box-sizing: border-box;
+}
+/* Appbar */
+body {
+  margin: 0;
+  padding-top: 256px;
+}
+#appbar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100%;
+  background-color: #3F51B5;
+  color: #fff;
+  transition: .25s box-shadow;
+}
+[shadow] {
+  box-shadow: /*4dp*/
+  0px 2px 4px -1px rgba(0,0,0,.2),
+  0px 4px 5px 0px rgba(0,0,0,.14),
+  0px 1px 10px 0px rgba(0,0,0,.12);
+}
+#banner {
+  position: absolute;
+  z-index: -1;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+#title {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0 16px;
+  line-height: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+/* 标签列表 */
+#tags {
+  padding: 4px;
+  margin-top: 0;
+  margin-bottom: 0;
+  list-style: none;
+  border-bottom: 1px solid #e1e1e1;
+}
+[clear] {
+  clear: both;
+}
+/* 标签 */
+[tag] {
+  display: inline-block;
+  margin: 4px;
+  height: 32px;
+  line-height: 32px;
+  padding: 0 12px;
+  border-radius : 16px;
+  background-color: #e0e0e0;
+  color: #1d1d1d;
+}
+[tag]:hover {text-decoration: none}
+/* 作者标签 */
+#author {
+  display: inline-flex;
+  float: right;
+  align-items: center;
+  padding-left: 0;
+}
+#author-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+/* 文章容器 */
+article {
+  padding: 8px 16px;
+  margin: 0 auto;
+  max-width: 1140px;
+}
+/* 排版 */
+p,
+blockquote,
+figure,
+h1,
+hr {
+  border: none;
+  margin: 16px 0;
+}
+hr {border-bottom: 1px solid #e1e1e1}
+img[hr] {
+  display: block;
+  margin: 16px auto;
+  max-width: 100%;
+}
+a {
+  color: #2962ff;
+  text-decoration: none
+}
+a:hover {text-decoration: underline;}
+blockquote {
+  border-left: 4px solid #e0e0e0;
+  padding: 16px;
+}
+/* 文本尺寸 */
+[tsize="1"] {font-size:12px}
+[tsize="2"] {font-size:16px}
+[tsize="3"] {font-size:20px}
+[tsize="4"] {font-size:24px}
+/* 文本对齐 */
+[talign="l"] {text-align: left}
+[talign="r"] {text-align: right}
+[talign="c"] {text-align: center}
+/* 文本颜色, 来自Material Design调色板 */
+[fg="blue300"] {color:#64b5f6}
+[fg="blue500"] {color:#2196f3}
+[fg="blue800"] {color:#1565c0}
+[fg="blue900"] {color:#0d47a1}
+[fg="lblue200"] {color:#81d4fa}
+[fg="lblue300"] {color:#4fc3f7}
+[fg="lblue700"] {color:#0288d1}
+[fg="lblue800"] {color:#0277bd}
+[fg="green300"] {color:#81c784}
+[fg="green400"] {color:#66bb6a}
+[fg="green500"] {color:#4caf50}
+[fg="green800"] {color:#2e7d32}
+[fg="yellow300"] {color:#fff176}
+[fg="yellow500"] {color:#ffeb3b}
+[fg="yellow700"] {color:#fbc02d}
+[fg="yellow900"] {color:#f57f17}
+[fg="pink200"] {color:#f48fb1}
+[fg="pink300"] {color:#f06292}
+[fg="pink600"] {color:#d81b60}
+[fg="pink800"] {color:#ad1457}
+[fg="purple200"] {color:#ce93d8}
+[fg="purple300"] {color:#ba68c8}
+[fg="purple400"] {color:#ab47bc}
+[fg="purple500"] {color:#9c27b0}
+[fg="gray300"] {color:#e0e0e0}
+[fg="gray500"] {color:#9e9e9e}
+[fg="gray700"] {color:#616161}
+[fg="gray900"] {color:#212121}
+/* 外部内容 */
+/* 图片内容 */
+figcaption {
+  text-align: center;
+  color: #9e9e9e;
+}
+figure > img {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+}
+/* 视频卡片 */
+[no-link] {color: inherit}
+[no-link]:hover {text-decoration: none}
+[video-card] {
+  display: flex;
+  flex-direction: row;
+  background-color: #fff;
+  border-radius: 4px;
+  box-shadow: /*1dp*/
+  0px 2px 1px -1px rgba(0,0,0,.2), 
+  0px 1px 1px 0px rgba(0,0,0,.14),
+  0px 1px 3px 0px rgba(0,0,0,.12);
+  transition: .25s box-shadow;
+}
+[video-card]:hover {
+  box-shadow: /*8dp*/
+  0px 5px 5px -3px rgba(0,0,0,.2), 
+  0px 8px 10px 1px rgba(0,0,0,.14),
+  0px 3px 14px 2px rgba(0,0,0,.12);
+}
+[video-cover] {
+  height: 96px;
+  margin: 16px 0 16px 16px;
+  border-radius: 4px;
+}
+[card-container] {
+  padding: 16px;
+}
+[video-owner],
+[video-data] {
+  font-size: 14px;
+  color: #666;
+}
+[video-title] {
+  font-size: 20px;
+  color: #000;
+}
+@media (max-width: 768px) {
+  [video-card] {
+    flex-direction: column;
+  }
+  [video-cover] {
+    margin: 0;
+    border-radius: 4px 4px 0 0;
+    object-fit: cover;
+  }
+  [video-title] {
+  font-size: 16px}
+}
