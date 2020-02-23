@@ -1,5 +1,5 @@
 # B站专栏下载器
-展示视频: [av81542179|【Python】【效果展示】使用Python+Requests+BeautifulSoup的B站专栏下载器](https://www.bilibili.com/video/av81542179)
+展示视频: [av81542179【Python】【效果展示】使用Python+Requests+BeautifulSoup的B站专栏下载器](https://www.bilibili.com/video/av81542179)
 
 下载B站上的专栏，并将其转化为合适的格式，风格采用[Material Design](https://material.io)
 
