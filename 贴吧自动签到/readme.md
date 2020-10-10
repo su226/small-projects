@@ -12,5 +12,5 @@
 本脚本在 Chrome 85 和 Firefox 81 上测试通过。如果你的浏览器过旧，可能无法使用，我**不保证**会兼容旧版浏览器，请[升级浏览器](https://support.dmeng.net/upgrade-your-browser.html)。
 
 ## 代码&安装
-[一键安装](https://cdn.jsdelivr.net/gh/su226/small-projects/贴吧自动签到/贴吧自动签到.user.js) [查看代码](https://github.com/su226/small-projects/贴吧自动签到/贴吧自动签到.user.js)<br>
+[一键安装](https://cdn.jsdelivr.net/gh/su226/small-projects/贴吧自动签到/贴吧自动签到.user.js) [查看代码](https://github.com/su226/small-projects/blob/master/贴吧自动签到/贴吧自动签到.user.js)<br>
 需要安装有Tampermonkey或其他用户脚本管理器
