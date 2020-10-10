@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name           贴吧自动签到
 // @namespace      https://su226.github.io
+// @author         congxz6688, su226
 // @description    基于tiebaAllSign用户脚本修改
 // @include        http*://www.baidu.com/*
 // @include        http*://tieba.baidu.com/*
 // @connect        tieba.baidu.com
 // @icon           data:image/webp;base64,UklGRlYCAABXRUJQVlA4TEoCAAAvP8APEM/EIJKkRo0MjGOXD5ckiAVTPJXuBAJJovsDLMA2kiQ1zyyXc1D+kchXDMyjsG3bpnuXeQPiNADAoiChgkQNjYQBASMKalT7APjxAwDe9SL/itdSEeJLvyBDAhQvDvx/fsXJhwVT9A+CKCIqSBe3mAMhzmILINu2bUOSdrVt27Zt27aVtuLGDrTt/t48J+pm3Nd+iOj/BMDmiD5xFJz9z8ZgmyOl0YNtDkpUuNk10OYAacBAm0OTFCdHlwD0pTxJaQoZXXGoNI0k42vOlKdTjG84UplBOTjpRnUW5eCEP9bmOGn8WJtDuqpzKAfHfFgdIY2C7dpcysERHy7U5lMODvtwob6A6kEDF+qLqB4wcKGxhOo+AxcaS6nuMXChuYzqLgMXmsup7vTgQmsF1e0eXGitorrNgwvtNVS3dOBCex3VTR240F5PdUMH1l/3orOB6vo2rJtDp+x1NlJd24Z1/zDD07Y6m6mubsG6fzQgwzN2vK1UV7Zg3T8ekGR4xoa3neryFuxfDCiGZ/vn7aC6rIkeZv5IDM8Bw8aIw7u8XVSXNtDTV78lRueR2OymuqSBHr/8JTG6kMTspbqojp6/+CkxuqiZ/VQX1JHC5z8kRpclc4DqvBpS+ey7xPhqlzlIdU4VKX36TWJ8DfAPBcrsKlL75KvE+Lp/JKA8s4IUP/4iMV4cUJ5eRqoffZYSTisj5Q8/9WNqCal/8DHR5CIcvP8hwaQCnLz3XpmYh6N33wkTcnD2zluS/3Jw+PYb/s3C6VsLM0gp
-// @author         congxz6688, su226
+// @updateURL      https://cdn.jsdelivr.net/gh/su226/small-projects/贴吧自动签到/贴吧自动签到.user.js
 // @grant          GM_getValue
 // @grant          GM_setValue
 // @grant          GM_xmlhttpRequest
