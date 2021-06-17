@@ -1,0 +1,16 @@
+{
+  "trigger": ["pressed", {
+    "mode": 1,
+    "activate_keys": [-9],
+    "deactivate_keys": []
+  }],
+  "actions": [
+    ["mouse_tap", {
+      "times": 1,
+      "duration": 0,
+      "delay": 0,
+      "button": 1,
+      "position": [false, 0, 0 ]
+    }]
+  ]
+}
