@@ -1131,7 +1131,7 @@ class MainWindow(Gtk.Window):
   def on_action(self):
     for i in self.actions:
       try:
-        i.exec
+        i.exec()
       except:
         traceback.print_exc()
 
