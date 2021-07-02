@@ -58,19 +58,19 @@ class KeyDialog(Gtk.MessageDialog):
     self.code = None
 
     if mode != 1:
-      self.connect("key-release-event", self.on_key_release)
+      self.connect("key-release-event", self.self_key_release)
 
     if mode != 2:
       button = Gtk.Button(label="点击此处")
-      button.connect("button-release-event", self.on_button_release)
+      button.connect("button-release-event", self.self_button_release)
       self.get_message_area().pack_start(button, False, True, 0)
       button.show()    
 
-  def on_button_release(self, entry, button):
+  def self_button_release(self, entry, button):
     self.code = -button.button
     self.response(Gtk.ResponseType.OK)
 
-  def on_key_release(self, entry, key):
+  def self_key_release(self, entry, key):
     self.code = key.keyval
     self.response(Gtk.ResponseType.OK)
 
@@ -86,11 +86,11 @@ class LocateDialog(Gtk.Dialog):
     self.set_app_paintable(True)
     self.set_size_request(self.w, self.h)
     self.set_events(Gdk.EventMask.POINTER_MOTION_MASK)
-    self.connect("draw", self.on_draw)
-    self.connect("motion-notify-event", self.on_motion)
-    self.connect("button-release-event", self.on_button_release)
+    self.connect("draw", self.self_draw)
+    self.connect("motion-notify-event", self.self_motion)
+    self.connect("button-release-event", self.self_button_release)
 
-  def on_draw(self, window, cr):
+  def self_draw(self, window, cr):
     cr.set_source_rgb(0.129411765, 0.588235294, 0.952941176) # 2196f3
     cr.move_to(0, self.y)
     cr.line_to(self.w, self.y)
@@ -105,11 +105,11 @@ class LocateDialog(Gtk.Dialog):
 
     self.queue_draw()
 
-  def on_motion(self, window, event):
+  def self_motion(self, window, event):
     self.x = event.x
     self.y = event.y
 
-  def on_button_release(self, window, event):
+  def self_button_release(self, window, event):
     self.response(Gtk.ResponseType.OK)
 
 class Trigger:
@@ -276,7 +276,6 @@ class TriggerPressed(Trigger):
     self.deactivate_keys = set()
     self.raw_deactivate_keys = set()
     self.pressed = set()
-    self.active = False
 
   def start(self, action_fn, stop_fn):
     super().start(action_fn, stop_fn)
@@ -298,8 +297,8 @@ class TriggerPressed(Trigger):
       dialog.run()
       dialog.destroy()
       return self.stop()
-    self.condition = threading.Condition()
-    self.thread = threading.Thread(target=self.run)
+    self.event = threading.Event()
+    self.thread = threading.Thread(target=self.run, daemon=True)
     self.thread.start()
     self.thread2 = self.KeyboardListener(self)
     self.thread2.start()
@@ -327,37 +326,33 @@ class TriggerPressed(Trigger):
     if code in self.pressed:
       return
     self.pressed.add(code)
-    if self.pressed == self.raw_activate_keys:
+    if self.raw_activate_keys <= self.pressed:
       # 按下触发一次，按下触发松开停止，触发键触发停止键停止
       if self.mode in (0, 1, 3):
-        self.active = True
+        self.event.set()
       # 按下触发再按停止
       else:
-        self.active = not self.active
-      if self.active:
-        self.condition.acquire()
-        self.condition.notify()
-        self.condition.release()
-    elif self.mode == 3 and self.pressed == self.raw_deactivate_keys:
-      self.active = False
+        if self.event.is_set():
+          self.event.clear()
+        else:
+          self.event.set()
+    elif self.mode == 3 and self.raw_deactivate_keys <= self.pressed:
+      self.event.clear()
 
   def release(self, code):
     if code not in self.pressed:
       return
     self.pressed.remove(code)
     # 按下触发松开停止
-    if self.mode == 1 and self.pressed != self.activate_keys:
-      self.active = False
+    if self.mode == 1 and not self.raw_activate_keys <= self.pressed:
+      self.event.clear()
 
   def run(self):
     while True:
-      while self.active:
-        self.action_fn()
-        if self.mode == 0:
-          self.active = False
-      self.condition.acquire()
-      self.condition.wait()
-      self.condition.release()
+      self.event.wait()
+      self.action_fn()
+      if self.mode == 0:
+        self.event.clear()
 
 class Action:
   def exec(self):
@@ -901,12 +896,12 @@ class MainWindow(Gtk.Window):
     self.add(vbox)
     vbox.show()
 
-    scrolled = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
-    vbox.pack_start(scrolled, True, True, 0)
-    scrolled.show()
+    self.scrolled = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+    vbox.pack_start(self.scrolled, True, True, 0)
+    self.scrolled.show()
 
     vbox2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-    scrolled.add(vbox2)
+    self.scrolled.add(vbox2)
     vbox2.show()
 
     ########################################
@@ -961,10 +956,10 @@ class MainWindow(Gtk.Window):
     vbox.pack_start(hbox, False, True, 0)
     hbox.show()
 
-    button = Gtk.Button(label="导入")
-    button.connect("clicked", self.import_clicked)
-    hbox.pack_start(button, True, True, 0)
-    button.show()
+    self.import_button = Gtk.Button(label="导入")
+    self.import_button.connect("clicked", self.import_clicked)
+    hbox.pack_start(self.import_button, True, True, 0)
+    self.import_button.show()
 
     button = Gtk.Button(label="导出")
     button.connect("clicked", self.export_clicked)
@@ -1126,18 +1121,22 @@ class MainWindow(Gtk.Window):
     else:
       self.running = True
       self.toggle_button.set_label("停止")
-      self.trigger.start(self.on_action, self.on_stop)
+      self.scrolled.set_sensitive(False)
+      self.import_button.set_sensitive(False)
+      self.trigger.start(self.trigger_action, self.trigger_stop)
 
-  def on_action(self):
+  def trigger_action(self):
     for i in self.actions:
       try:
         i.exec()
       except:
         traceback.print_exc()
 
-  def on_stop(self):
+  def trigger_stop(self):
     self.running = False
     self.toggle_button.set_label("开始")
+    self.scrolled.set_sensitive(True)
+    self.import_button.set_sensitive(True)
 
 if __name__ == "__main__":
   window = MainWindow()

@@ -6,11 +6,13 @@
   }],
   "actions": [
     ["mouse_tap", {
+      "mode": 0,
       "times": 1,
-      "duration": 0,
+      "duration": 0.01,
       "delay": 0,
       "button": 1,
-      "position": [false, 0, 0 ]
-    }]
+      "position": [false, 0, 0]
+    }],
+    ["sleep", 0.01]
   ]
 }
