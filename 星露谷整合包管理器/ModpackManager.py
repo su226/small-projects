@@ -8,10 +8,16 @@ import shutil
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk
 
-DIR = os.path.abspath(os.path.dirname(__file__))
+if hasattr(sys, "_MEIPASS"):
+  DIR = os.path.abspath(os.path.dirname(sys.executable))
+else:
+  DIR = os.path.abspath(os.path.dirname(__file__))
 MODPACKS_DIR = os.path.join(DIR, "Modpacks")
 MODS_DIR = os.path.join(DIR, "Mods")
-COMMAND = os.path.join(DIR, "StardewValley")
+if sys.platform == "win32":
+  COMMAND = os.path.join(DIR, "StardewModdingAPI")
+else:
+  COMMAND = os.path.join(DIR, "StardewValley")
 
 class ModpackEditDialog(Gtk.Dialog):
   def __init__(self, parent, name, mods):
@@ -160,6 +166,7 @@ class MainWindow(Gtk.Window):
   def launch_modpack(self, name):
     modpack_dir = os.path.join(MODPACKS_DIR, name)
     os.environ["XDG_CONFIG_HOME"] = modpack_dir
+    os.environ["USERPROFILE"] = modpack_dir
     os.environ["SMAPI_MODS_PATH"] = os.path.join(modpack_dir, "Mods")
     subprocess.Popen([COMMAND])
     self.close()
