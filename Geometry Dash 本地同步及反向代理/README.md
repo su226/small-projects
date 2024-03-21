@@ -1,5 +1,5 @@
 # Geometry Dash 本地同步 & 反向代理
-我编写这个工具出于两个原因：RobTop 的备份服务器经常抽风，以及 [GDProxy](https://gd.geometrydashchinese.com) 有时会返回 500，导致游戏里时常出现“Something went wrong”，影响游戏体验。
+我编写这个工具出于两个原因：RobTop 的备份服务器经常抽风，以及 [GDProxy](https://dl.geometrydashchinese.com) 有时会返回 500，导致游戏里时常出现“Something went wrong”，影响游戏体验。
 
 ## 主要功能
 * 在本地保存备份并在后台自动上传
