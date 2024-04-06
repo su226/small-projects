@@ -9,7 +9,7 @@ from enum import Enum
 from types import TracebackType
 from typing import (Annotated, Any, AsyncContextManager, AsyncGenerator,
                     Awaitable, Generator, Literal)
-from urllib.parse import unquote as decodeuri
+from urllib.parse import unquote as decodeuri, quote as encodeuri
 
 import aiohttp
 from aiohttp import web
@@ -21,6 +21,24 @@ from pydantic_core import to_jsonable_python
 
 Gjp2Str = Annotated[str, StringConstraints(to_lower=True, pattern="^[0-9a-f]{40}$")]
 OFFICIAL_SERVER = "https://www.boomlings.com/database"
+
+
+def pydantic_dump(*args: Any, **kw: Any) -> None:
+    json.dump(*args, separators=(",", ":"), default=to_jsonable_python, **kw)
+
+
+def try_scandir(path: str) -> Generator[os.DirEntry[str], Any, Any]:
+    try:
+        yield from os.scandir(path)
+    except FileNotFoundError:
+        pass
+
+
+def try_remove(path: str) -> None:
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
 
 
 class Gjp2Mode(Enum):
@@ -99,12 +117,12 @@ class Config(BaseModel):
     song_retry_4xx: bool = False
     song_proxy: None | HttpUrl = None
     song_info_ttl: None | NonNegativeFloat = 600
-    sfx_enabled: bool = True
-    sfx_server: None | HttpUrl = None
-    sfx_retry_count: None | NonNegativeInt = None
-    sfx_retry_4xx: bool = False
-    sfx_proxy: None | HttpUrl = None
-    sfx_server_ttl: None | NonNegativeFloat = 600
+    assets_enabled: bool = True
+    assets_server: None | HttpUrl = None
+    assets_retry_count: None | NonNegativeInt = None
+    assets_retry_4xx: bool = False
+    assets_proxy: None | HttpUrl = None
+    assets_server_ttl: None | NonNegativeFloat = 600
 
     @property
     def backup_server_repr(self) -> str:
@@ -128,12 +146,12 @@ class Config(BaseModel):
         return None if self.song_proxy is None else str(self.song_proxy)
 
     @property
-    def sfx_proxy_str(self) -> str | None:
-        return None if self.sfx_proxy is None else str(self.sfx_proxy)
+    def assets_proxy_str(self) -> str | None:
+        return None if self.assets_proxy is None else str(self.assets_proxy)
 
 
 class BackupTask(BaseModel):
-    time: float
+    time: float = Field(default_factory=time.time)
     server: HttpUrl
     token: dict[str, str]
     retry_left: NonNegativeInt | None
@@ -253,7 +271,7 @@ class ApiContextManager(AsyncContextManager, Awaitable[aiohttp.ClientResponse]):
         retry_left = self.manager.retry_count
         while True:
             response = await self.manager.client.post(f"{self.manager.server}/{self.api}.php", **kw)
-            if response.ok or retry_left == 0 or (400 <= response.status <= 499 and not self.manager.retry_4xx):
+            if response.ok or (retry_left is not None and retry_left <= 0) or (400 <= response.status <= 499 and not self.manager.retry_4xx):
                 logger.log("DEBUG" if response.ok else "WARNING", f"{response.status} {response.method} {response.url}")
                 self._resp = response
                 return response
@@ -266,88 +284,95 @@ class ApiContextManager(AsyncContextManager, Awaitable[aiohttp.ClientResponse]):
 
 
 class SongInfo(BaseModel):
-    time: float
+    time: float = Field(default_factory=time.time)
     data: dict[int, str] | int
 
     @staticmethod
     def load(info: str) -> dict[int, str]:
         data = info.split("~|~")
-        return {int(data[i]): data[i + 1] for i in range(0, len(data), 2)}
+        data = {int(data[i]): data[i + 1] for i in range(0, len(data), 2)}
+        if 10 in data:
+            data[10] = decodeuri(data[10])
+        return data
 
     @staticmethod
     def dump(data: dict[int, str]) -> str:
-        return "~|~".join(f"{k}~|~{v}" for k, v in data.items())
+        return "~|~".join(f"{k}~|~{encodeuri(v, safe='') if k == 10 else v}" for k, v in data.items())
 
 
 class SongInfoCache:
     def __init__(self, api: ApiCaller, ttl: float | None) -> None:
         self.api = api
         self.ttl = ttl
-        self.delete_token: dict[int, asyncio.TimerHandle] = {}
+        self.delete_tokens: dict[int, asyncio.TimerHandle] = {}
 
     async def get(self, id: int) -> dict[int, str] | int:
-        current_time = time.time()
         try:
-            with open(f"songs/{id}.json", "r") as f:
+            with open(f"song_infos/{id}.json", "r") as f:
                 cache = SongInfo.model_validate(json.load(f))
-            if self.ttl is None or current_time - cache.time < self.ttl:
+            if self.ttl is None or time.time() - cache.time < self.ttl:
                 return cache.data
             logger.info(f"歌曲 {id} 的元数据缓存已过期，重新获取中")
         except FileNotFoundError:
             pass
         async with self.api(data={"songID": id, "secret": "Wmfd2893gb7"}) as response:
             info = await response.text()
-            info = int(info) if info.startswith("-") else SongInfo.load(info)
-        os.makedirs("songs", exist_ok=True)
-        with open(f"songs/{id}.json", "w") as f:
+            try:
+                info = int(info)
+            except ValueError:
+                info = SongInfo.load(info)
+        self.insert(id, info)
+        return info
+
+    def insert(self, id: int, info: dict[int, str] | int) -> None:
+        os.makedirs("song_infos", exist_ok=True)
+        with open(f"song_infos/{id}.json", "w") as f:
             logger.info(f"已创建歌曲 {id} 的元数据缓存")
-            json.dump(SongInfo(time=current_time, data=info), f, default=to_jsonable_python)
+            pydantic_dump(SongInfo(data=info), f)
             if self.ttl is not None:
                 self.schedule_delete(id, self.ttl)
-        return info
-    
+
     def schedule_delete(self, id: int, delay: float) -> None:
         def do_delete() -> None:
             logger.info(f"已删除歌曲 {id} 的元数据缓存")
-            os.remove(f"songs/{id}.json")
-            self.delete_token.pop(id, None)
+            os.remove(f"song_infos/{id}.json")
+            self.delete_tokens.pop(id, None)
 
-        if token := self.delete_token.pop(id, None):
+        if token := self.delete_tokens.pop(id, None):
             token.cancel()
         if delay <= 0:
             do_delete()
         else:
-            self.delete_token[id] = asyncio.get_running_loop().call_later(delay, do_delete)
+            self.delete_tokens[id] = asyncio.get_running_loop().call_later(delay, do_delete)
 
-    def clean_old_info(self) -> None:
+    def clean(self) -> None:
         if self.ttl is None:
             return
         current_time = time.time()
-        for file in os.scandir("songs"):
+        for file in try_scandir("song_infos"):
             with open(file.path) as f:
                 cache = SongInfo.model_validate(json.load(f))
                 id = int(file.name.removesuffix(".json"))
                 self.schedule_delete(id, self.ttl - (current_time - cache.time))
 
 
-class SfxCdn(BaseModel):
-    time: float
+class AssetsServer(BaseModel):
+    time: float = Field(default_factory=time.time)
     cdn: str
 
     @staticmethod
     async def fetch(api_manager: ApiManager, cache_duration: float | None = 600) -> str:
-        current_time = time.time()
         try:
-            with open(f"sfx_cdn.json", "r") as f:
-                cache = SfxCdn.model_validate(json.load(f))
-            if cache_duration is None or current_time - cache.time < cache_duration:
+            with open(f"assets_server.json", "r") as f:
+                cache = AssetsServer.model_validate(json.load(f))
+            if cache_duration is None or time.time() - cache.time < cache_duration:
                 return cache.cdn
         except FileNotFoundError:
             pass
         async with api_manager.getCustomContentURL() as response:
             cdn = await response.text()
-        with open(f"sfx_cdn.json", "w") as f:
-            json.dump(SfxCdn(time=current_time, cdn=cdn), f, default=to_jsonable_python)
+        with open(f"assets_server.json", "w") as f:
+            json.dump(AssetsServer(cdn=cdn), f, default=to_jsonable_python)
         return cdn
 
 
@@ -369,11 +394,6 @@ async def _(request: web.Request) -> web.Response:
         f"游戏服务器 {config.game_server}\n"
         f"备份服务器 {config.backup_server_repr}"
     ))
-
-
-@routes.get("/favicon.ico")
-async def _(request: web.Request) -> web.Response:
-    return web.HTTPNotFound()
 
 
 @routes.post("/{pad:/*}getAccountURL.php")
@@ -408,7 +428,7 @@ async def _(request: web.Request) -> web.Response:
                 server = AnyUrl(await response.text())
         else:
             server = config.backup_server
-        request.app[BACKUP_SCHEDULER].schedule(account_id, BackupTask(time=time.time(), server=server, token=form, retry_left=config.backup_retry_count))
+        request.app[BACKUP_SCHEDULER].schedule(account_id, BackupTask(server=server, token=form, retry_left=config.backup_retry_count))
     return web.Response(body="1")
 
 
@@ -433,11 +453,13 @@ async def _(request: web.Request) -> web.Response:
 async def _(request: web.Request) -> web.Response:
     async with request.app[API_MANAGER]["accounts/loginGJAccount"](request) as response:
         data = await response.text()
-        if not data.startswith("-"):
+        try:
+            return web.Response(body=str(int(data)))
+        except ValueError:
             account_id, uuid = data.split(",")
             form = form_vaildator.validate_python(await request.post())
             request.app[CONFIG].backup_auth.write_gjp2(int(account_id), form["gjp2"])
-        return web.Response(body=data)
+            return web.Response(body=data)
 
 
 @routes.post("/{pad:/*}getGJSongInfo.php")
@@ -451,27 +473,51 @@ async def _(request: web.Request) -> web.StreamResponse:
     info = await request.app[SONG_INFO_CACHE].get(song_id)
     if isinstance(info, int):
         return web.Response(body=str(info))
-    info[10] = f"{request.url.origin()}/song/{info[1]}"
+    if info[10] != "CUSTOMURL":
+        info[10] = f"{request.url.origin()}/song/{info[1]}"
     return web.Response(body=SongInfo.dump(info))
+
+
+@routes.post("/{pad:/*}getGJLevels21.php")
+async def _(request: web.Request) -> web.StreamResponse:
+    config = request.app[CONFIG]
+    if not config.song_enabled:
+        return await request.app[API_MANAGER].getGJLevels21.stream(request)
+    async with request.app[API_MANAGER].getGJLevels21(request) as response:
+        data = await response.text()
+        try:
+            return web.Response(body=str(int(data)))
+        except ValueError:
+            data = data.split("#")
+            songs = data[2].split("~:~")
+            for i, song in enumerate(songs):
+                info = SongInfo.load(song)
+                request.app[SONG_INFO_CACHE].insert(int(info[1]), info)
+                if info[10] != "CUSTOMURL":
+                    info[10] = f"{request.url.origin()}/song/{info[1]}"
+                songs[i] = SongInfo.dump(info)
+            data[2] = "~:~".join(songs)
+            return web.Response(body="#".join(data))
 
 
 @routes.post("/{pad:/*}getCustomContentURL.php")
 async def _(request: web.Request) -> web.StreamResponse:
-    if not request.app[CONFIG].sfx_enabled:
+    if not request.app[CONFIG].assets_enabled:
         return await request.app[API_MANAGER].getCustomContentURL.stream(request)
-    return web.Response(body=str(request.url.origin()))
+    return web.Response(body=f"{request.url.origin()}/assets")
 
 
-@routes.get(r"/sfx/s{sfx_id:\d+}.ogg")
+@routes.get(r"/assets/{path:.*}")
 async def _(request: web.Request) -> web.StreamResponse:
     config = request.app[CONFIG]
-    if not config.sfx_enabled:
+    if not config.assets_enabled:
         return web.HTTPForbidden()
-    url = f"{config.sfx_server or await SfxCdn.fetch(request.app[API_MANAGER], config.sfx_server_ttl)}{request.path_qs}"
-    retry_left = config.sfx_retry_count
+    server = config.assets_server or await AssetsServer.fetch(request.app[API_MANAGER], config.assets_server_ttl)
+    url = f"{server}{request.path_qs.removesuffix('/assets')}"
+    retry_left = config.assets_retry_count
     while True:
-        async with request.app[HTTP_CLIENT].get(url, proxy=config.sfx_proxy_str) as response:
-            if response.ok or retry_left == 0 or (400 <= response.status <= 499 and not config.sfx_retry_4xx):
+        async with request.app[HTTP_CLIENT].get(url, proxy=config.assets_proxy_str) as response:
+            if response.ok or retry_left == 0 or (400 <= response.status <= 499 and not config.assets_retry_4xx):
                 logger.log("DEBUG" if response.ok else "WARNING", f"{response.status} {response.method} {response.url}")
                 return await stream_response(request, response)
             retry_left = None if retry_left is None else retry_left - 1
@@ -485,9 +531,9 @@ async def _(request: web.Request) -> web.StreamResponse:
         if url is not None:
             return url
         info = await request.app[SONG_INFO_CACHE].get(song_id)
-        if isinstance(info, int):
+        if isinstance(info, int) or info[10] == "CUSTOMURL":
             raise web.HTTPNotFound(body=str(info))
-        url = decodeuri(info[10])
+        url = info[10]
         return url
 
     config = request.app[CONFIG]
@@ -525,7 +571,7 @@ async def setup_http_client(app: web.Application) -> AsyncGenerator[None, None]:
     app[API_MANAGER] = api_manager = ApiManager(http_client, str(config.game_server).removesuffix("/"), config.game_retry_count, config.game_retry_4xx, proxy=config.game_proxy_str)
     if config.song_enabled:
         app[SONG_INFO_CACHE] = song_info_cache = SongInfoCache(api_manager["/getGJSongInfo" if config.song_bypass_ngproxy else "getGJSongInfo"], config.song_info_ttl)
-        song_info_cache.clean_old_info()
+        song_info_cache.clean()
     yield
     await http_client.close()
 
@@ -544,7 +590,7 @@ async def setup_backup_scheduler(app: web.Application) -> AsyncGenerator[None, N
         pass
     yield
     with open("backup_tasks.json", "w") as f:
-        json.dump(scheduler.tasks, f, separators=(",", ":"), default=to_jsonable_python)
+        pydantic_dump(scheduler.tasks, f)
     if scheduler.tasks:
         logger.info(f"已保存 {len(scheduler.tasks)} 个未上传成功的任务")
 

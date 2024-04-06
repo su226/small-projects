@@ -97,11 +97,11 @@ waitpid -e $PID 2> /dev/null
     "song_retry_4xx": false, // 参见 game_retry_4xx
     "song_proxy": null, // 参见 game_proxy
     "song_info_ttl": 600, // 歌曲元数据的缓存时间，单位为秒，过期的缓存会自动删除，null 为永久缓存（不建议设置为 0，会导致下载歌曲时获取两次元数据）
-    "sfx_enabled": true, // 是否反代音效
-    "sfx_server": null, // 自定义音效服务器，null 为从游戏服务器获取
-    "sfx_retry_count": null, // 音效的重试次数，null 为无限重试
-    "sfx_retry_4xx": false,  // 参见 game_retry_4xx
-    "sfx_proxy": null, // 参见 game_proxy
-    "sfx_server_ttl": 600 // 从游戏服务器获取的音效服务器地址的缓存时间，单位为秒，null 为永久缓存（不建议设置为 0，会导致下载音效时获取多次服务器地址）
+    "assets_enabled": true, // 是否反代音效
+    "assets_server": null, // 自定义音效服务器，null 为从游戏服务器获取
+    "assets_retry_count": null, // 音效的重试次数，null 为无限重试
+    "assets_retry_4xx": false,  // 参见 game_retry_4xx
+    "assets_proxy": null, // 参见 game_proxy
+    "assets_server_ttl": 600 // 从游戏服务器获取的音效服务器地址的缓存时间，单位为秒，null 为永久缓存（不建议设置为 0，会导致下载音效时获取多次服务器地址）
 }
 ```
