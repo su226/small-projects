@@ -440,9 +440,9 @@ async def _(request: web.Request) -> web.Response:
     if not config.backup_enabled or not config.backup_auth.validate_gjp2(account_id, form["gjp2"]):
         return web.HTTPForbidden(body="-1")
     try:
-        with open(f"{account_id}/CCGameManager.xml.gz", "rb") as f:
+        with open(f"accounts/{account_id}/CCGameManager.xml.gz", "rb") as f:
             ccgamemanager = base64.urlsafe_b64encode(f.read()).decode()
-        with open(f"{account_id}/CCLocalLevels.xml.gz", "rb") as f:
+        with open(f"accounts/{account_id}/CCLocalLevels.xml.gz", "rb") as f:
             cclocallevels = base64.urlsafe_b64encode(f.read()).decode()
     except FileNotFoundError:
         return web.Response(body="-1")
