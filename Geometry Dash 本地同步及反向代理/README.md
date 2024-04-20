@@ -3,7 +3,8 @@
 
 ## 主要功能
 * 在本地保存备份并在后台自动上传
-* 反向代理游戏的 API、歌曲下载和（Platformer 模式的）音效下载，并为它们设置不同的代理
+* 反向代理游戏的 API、音乐下载和音效下载，并为它们设置不同的代理
+* 在下载关卡时后台下载所有音乐和音效，实现并行下载音乐和音效
 * 在遇到 5xx 错误码时自动重试
 * 支持鉴权，可选配置白名单 / 黑名单
 * 在使用 GDProxy 时，可选绕过 [NGProxy](https://ng.geometrydashchinese.com) 而直接从 Newgrounds 下载音乐
@@ -90,18 +91,21 @@ waitpid -e $PID 2> /dev/null
         "fetch_gjp2": true, // 从游戏服务器自动获取 gjp2（密码的哈希），禁用将忽略 gjp2（不安全）
         "gjp2_override": {} // 手动覆盖指定帐号的 gjp2，可以为一个 SHA1 字符串、"auto"（自动获取）或 "ignore"（忽略 gjp2）
     },
-    "song_enabled": true, // 是否反代歌曲
+    "song_enabled": true, // 是否反代音乐
     "song_ngproxy": true, // 是否优先使用 NGProxy，当 NGProxy 不可用时回退到原链接下载
     "song_bypass_ngproxy": true, // 在获取原链接时绕过 NGProxy，只保证在使用 GDProxy 时可用
     "song_retry_count": null, // 下歌的重试次数，null 为无限重试
     "song_retry_4xx": false, // 参见 game_retry_4xx
     "song_proxy": null, // 参见 game_proxy
-    "song_info_ttl": 600, // 歌曲元数据的缓存时间，单位为秒，过期的缓存会自动删除，null 为永久缓存（不建议设置为 0，会导致下载歌曲时获取两次元数据）
+    "song_info_ttl": 600, // 音乐元数据的缓存时间，单位为秒，过期的缓存会自动删除，null 为永久缓存（不建议设置为 0，会导致下载音乐时获取两次元数据）
     "assets_enabled": true, // 是否反代音效
     "assets_server": null, // 自定义音效服务器，null 为从游戏服务器获取
     "assets_retry_count": null, // 音效的重试次数，null 为无限重试
     "assets_retry_4xx": false,  // 参见 game_retry_4xx
     "assets_proxy": null, // 参见 game_proxy
-    "assets_server_ttl": 600 // 从游戏服务器获取的音效服务器地址的缓存时间，单位为秒，null 为永久缓存（不建议设置为 0，会导致下载音效时获取多次服务器地址）
+    "assets_server_ttl": 600, // 从游戏服务器获取的音效服务器地址的缓存时间，单位为秒，null 为永久缓存（不建议设置为 0，会导致下载音效时获取多次服务器地址）
+    "prefetch": true, // 在下载关卡时预载音乐和音效，所有的音乐和音效将会并行下载
+    "prefetch_ttl": 600, // 预载文件的保留时长，单位为秒，过期的缓存会自动删除，null 为永久缓存（不建议设置为 0，很显然）
+    "prefetch_target_dir": null // 存档目录，在本地运行时建议指定此选项，预载时将会跳过存档目录中已有的音乐和音效
 }
 ```

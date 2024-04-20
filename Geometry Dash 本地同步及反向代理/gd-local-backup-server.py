@@ -8,8 +8,9 @@ from collections import defaultdict
 from enum import Enum
 from types import TracebackType
 from typing import (Annotated, Any, AsyncContextManager, AsyncGenerator,
-                    Awaitable, Generator, Literal)
-from urllib.parse import unquote as decodeuri, quote as encodeuri
+                    Awaitable, ClassVar, Generator, Literal)
+from urllib.parse import quote as encodeuri
+from urllib.parse import unquote as decodeuri
 
 import aiohttp
 from aiohttp import web
@@ -123,6 +124,9 @@ class Config(BaseModel):
     assets_retry_4xx: bool = False
     assets_proxy: None | HttpUrl = None
     assets_server_ttl: None | NonNegativeFloat = 600
+    prefetch: bool = True
+    prefetch_ttl: None | NonNegativeFloat = 600
+    prefetch_target_dir: None | str = None
 
     @property
     def backup_server_repr(self) -> str:
@@ -223,6 +227,14 @@ async def stream_response(request: web.BaseRequest, response: aiohttp.ClientResp
     return stream
 
 
+def is_int(data: str) -> bool:
+    try:
+        int(data)
+        return True
+    except ValueError:
+        return False
+
+
 class ApiManager:
     def __init__(self, client: aiohttp.ClientSession, server: str, retry_count: int | None = None, retry_4xx: bool = False, **kw: Any) -> None:
         client.cookie_jar.update_cookies({"gd": "1"})
@@ -275,8 +287,8 @@ class ApiContextManager(AsyncContextManager, Awaitable[aiohttp.ClientResponse]):
                 logger.log("DEBUG" if response.ok else "WARNING", f"{response.status} {response.method} {response.url}")
                 self._resp = response
                 return response
-            retry_left = None if retry_left is None else retry_left - 1
             logger.warning(f"{response.status} {response.method} {response.url} 剩余 {retry_left} 次重试")
+            retry_left = None if retry_left is None else retry_left - 1
             await response.__aexit__(None, None, None)
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None) -> None:
@@ -317,6 +329,11 @@ class SongInfoCache:
             pass
         async with self.api(data={"songID": id, "secret": "Wmfd2893gb7"}) as response:
             info = await response.text()
+            if not response.ok:
+                try:
+                    return int(info)
+                except ValueError:
+                    return -1
             try:
                 info = int(info)
             except ValueError:
@@ -356,31 +373,297 @@ class SongInfoCache:
                 self.schedule_delete(id, self.ttl - (current_time - cache.time))
 
 
-class AssetsServer(BaseModel):
+class AssetsServer:
+    async def __call__(self) -> str:
+        raise NotImplementedError
+
+
+class AssetsServerInfo(BaseModel):
     time: float = Field(default_factory=time.time)
     cdn: str
 
-    @staticmethod
-    async def fetch(api_manager: ApiManager, cache_duration: float | None = 600) -> str:
+
+class AssetsServerCached(AssetsServer):
+    def __init__(self, api: ApiCaller, ttl: float | None = 600) -> None:
+        self.api = api
+        self.ttl = ttl
+        self.lock = asyncio.Lock()
+
+    async def __call__(self) -> str:
+        async with self.lock:
+            try:
+                with open(f"assets_server.json", "r") as f:
+                    cache = AssetsServerInfo.model_validate(json.load(f))
+                if self.ttl is None or time.time() - cache.time < self.ttl:
+                    return cache.cdn
+            except FileNotFoundError:
+                pass
+            async with self.api() as response:
+                cdn = await response.text()
+            if response.ok:
+                with open(f"assets_server.json", "w") as f:
+                    pydantic_dump(AssetsServerInfo(cdn=cdn), f)
+            return cdn
+
+
+class AssetsServerStatic(AssetsServer):
+    def __init__(self, server: str) -> None:
+        self.server = server
+
+    async def __call__(self) -> str:
+        return self.server
+
+
+class PrefetchInfo(BaseModel):
+    time: float = Field(default_factory=time.time)
+    error: str | None = None
+
+
+class PrefetchTask:
+    def __init__(self, prefetcher: "Prefetcher", id: int) -> None:
+        self.prefetcher = prefetcher
+        self.id = id
+        self.prepare_future: asyncio.Future[str | tuple[int, str]] = asyncio.Future()
+        self.chunk_events: set[asyncio.Event] = set()
+        self.finished = False
+        logger.info(f"开始下载 {self.prefetcher.DIR} {id}")
+        asyncio.create_task(self.download())
+
+    async def download(self) -> None:
         try:
-            with open(f"assets_server.json", "r") as f:
-                cache = AssetsServer.model_validate(json.load(f))
-            if cache_duration is None or time.time() - cache.time < cache_duration:
-                return cache.cdn
+            try_remove(f"{self.prefetcher.DIR}/{self.id}.json")
+            try_remove(f"{self.prefetcher.DIR}/{self.id}")
+            response = await self.prefetcher.request(self.id)
+            if isinstance(response, str):
+                with open(f"{self.prefetcher.DIR}/{self.id}.json") as f:
+                    pydantic_dump(PrefetchInfo(error=response), f)
+                self.prepare_future.set_result((404, response))
+                return
+            async with response:
+                if not response.ok:
+                    self.prepare_future.set_result((response.status, await response.text()))
+                    return
+                os.makedirs(self.prefetcher.DIR, exist_ok=True)
+                with open(f"{self.prefetcher.DIR}/{self.id}", "wb") as f:
+                    self.prepare_future.set_result(response.headers["Content-Length"])
+                    data, _ = await response.content.readchunk()
+                    while data:
+                        f.write(data)
+                        for event in self.chunk_events:
+                            event.set()
+                        data, _ = await response.content.readchunk()
+            logger.info(f"下载完成 {self.prefetcher.DIR} {self.id}")
+            with open(f"{self.prefetcher.DIR}/{self.id}.json", "w") as f:
+                pydantic_dump(PrefetchInfo(), f)
+            os.rename(f"{self.prefetcher.DIR}/{self.id}", f"{self.prefetcher.DIR}/{self.id}")
+        finally:
+            self.finished = True
+            if self.prefetcher.tasks.get(self.id) == self:
+                del self.prefetcher.tasks[self.id]
+            if self.prefetcher.ttl is not None:
+                self.prefetcher.schedule_delete(self.id, self.prefetcher.ttl)
+
+    async def stream(self, request: web.Request) -> web.StreamResponse:
+        logger.info(f"正在串流 {self.prefetcher.DIR} {self.id}")
+        size = await self.prepare_future
+        if isinstance(size, tuple):
+            return web.Response(body=size[1], status=size[0])
+        response = web.StreamResponse(headers={"Content-Length": size})
+        await response.prepare(request)
+        chunk_event = asyncio.Event()
+        self.chunk_events.add(chunk_event)
+        try:
+            with open(f"{self.prefetcher.DIR}/{self.id}", "rb") as f:
+                await response.write(f.read())
+                while not self.finished:
+                    await chunk_event.wait()
+                    chunk_event.clear()
+                    await response.write(f.read())
+        finally:
+            self.chunk_events.remove(chunk_event)
+        return response
+
+
+class Prefetcher:
+    DIR: ClassVar[str]
+
+    def __init__(self, ttl: float | None) -> None:
+        self.tasks: dict[int, PrefetchTask] = {}
+        self.ttl = ttl
+        self.delete_tokens: dict[int, asyncio.TimerHandle] = {}
+
+    async def request(self, id: int) -> aiohttp.ClientResponse | str:
+        raise NotImplementedError
+
+    def schedule(self, id: int) -> PrefetchTask:
+        try:
+            return self.tasks[id]
+        except KeyError:
+            task = self.tasks[id] = PrefetchTask(self, id)
+            return task
+
+    def schedule_delete(self, id: int, delay: float) -> None:
+        def do_delete() -> None:
+            logger.info(f"已删除 {self.DIR} {id}")
+            try_remove(f"{self.DIR}/{id}.json")
+            try_remove(f"{self.DIR}/{id}")
+            self.delete_tokens.pop(id, None)
+
+        if token := self.delete_tokens.pop(id, None):
+            token.cancel()
+        if delay <= 0:
+            do_delete()
+        else:
+            self.delete_tokens[id] = asyncio.get_running_loop().call_later(delay, do_delete)
+
+    def clean(self) -> None:
+        if self.ttl is None:
+            return
+        current_time = time.time()
+        for file in try_scandir(self.DIR):
+            if not file.name.endswith(".json"):
+                continue
+            with open(file.path) as f:
+                cache = PrefetchInfo.model_validate(json.load(f))
+                id = int(file.name.removesuffix(".json"))
+                self.schedule_delete(id, self.ttl - (current_time - cache.time))
+
+    async def stream(self, request: web.Request, id: int, prefetch: bool = True) -> web.StreamResponse:
+        if not prefetch:
+            response = await self.request(id)
+            if isinstance(response, str):
+                return web.Response(body=response, status=404)
+            async with response:
+                return await stream_response(request, response)
+        try:
+            with open(f"{self.DIR}/{id}.json") as f:
+                cache = PrefetchInfo.model_validate(json.load(f))
+            if self.ttl is None or time.time() - cache.time < self.ttl:
+                if cache.error is not None:
+                    return web.Response(body=cache.error, status=404)
+                else:
+                    return web.FileResponse(f"{self.DIR}/{id}")
         except FileNotFoundError:
             pass
-        async with api_manager.getCustomContentURL() as response:
-            cdn = await response.text()
-        with open(f"assets_server.json", "w") as f:
-            json.dump(AssetsServer(cdn=cdn), f, default=to_jsonable_python)
-        return cdn
+        return await self.schedule(id).stream(request)
 
+    def ensure(self, id: int) -> None:
+        try:
+            with open(f"{self.DIR}/{id}.json") as f:
+                cache = PrefetchInfo.model_validate(json.load(f))
+            if self.ttl is None or time.time() - cache.time < self.ttl:
+                return
+        except FileNotFoundError:
+            pass
+        self.schedule(id)
+
+
+class SongPrefetcher(Prefetcher):
+    DIR = "song_prefetch"
+
+    def __init__(
+        self,
+        client: aiohttp.ClientSession,
+        proxy: str | None,
+        info_cache: SongInfoCache,
+        ttl: float | None,
+        retry_count: int | None,
+        retry_4xx: bool,
+        ngproxy: bool,
+        assets_server: AssetsServer,
+        target_dir: str | None,
+    ) -> None:
+        super().__init__(ttl)
+        self.client = client
+        self.proxy = proxy
+        self.info_cache = info_cache
+        self.retry_count = retry_count
+        self.retry_4xx = retry_4xx
+        self.ngproxy = ngproxy
+        self.assets_server = assets_server
+        self.target_dir = target_dir
+
+    async def request(self, id: int) -> aiohttp.ClientResponse | str:
+        url = None
+        ngproxy_available = True
+        retry_left = self.retry_count
+        while True:
+            if self.ngproxy and ngproxy_available:
+                response = await self.client.get(f"https://ng.geometrydashchinese.com/api/{id}/download")
+                logger.log("DEBUG" if response.ok else "WARNING", f"{response.status} {response.method} {response.url}")
+                if response.ok:
+                    return response
+                await response.__aexit__(None, None, None)
+                # NGProxy 似乎不返回 4xx，只返回 5xx，只是以防万一
+                # EDIT：这个返回 403 https://ng.geometrydashchinese.com/api/826472/download
+                if not self.retry_4xx and (400 <= response.status <= 499):
+                    ngproxy_available = False
+            if url is None:
+                info = await self.info_cache.get(id)
+                if isinstance(info, int):
+                    return str(info)
+                url = info.get(10)
+                if not url or url == "CUSTOMURL":
+                    url = f"{await self.assets_server()}/music/{id}.ogg"
+            response = await self.client.get(url, proxy=self.proxy)
+            if response.ok or (retry_left is not None and retry_left <= 0) or (400 <= response.status <= 499 and not self.retry_4xx):
+                logger.log("DEBUG" if response.ok else "WARNING", f"{response.status} {response.method} {response.url}")
+                return response
+            await response.__aexit__(None, None, None)
+            logger.warning(f"{response.status} {response.method} {response.url} 剩余 {retry_left} 次重试")
+            retry_left = None if retry_left is None else retry_left - 1
+
+    def ensure(self, id: int) -> None:
+        if self.target_dir and (os.path.exists(f"{self.target_dir}/{id}.mp3") or os.path.exists(f"{self.target_dir}/{id}.ogg")):
+            return
+        super().ensure(id)
+
+
+class SfxPrefetcher(Prefetcher):
+    DIR = "sfx_prefetch"
+
+    def __init__(
+        self,
+        client: aiohttp.ClientSession,
+        proxy: str | None,
+        ttl: float | None,
+        retry_count: int | None,
+        retry_4xx: bool,
+        assets_server: AssetsServer,
+        target_dir: str | None,
+    ) -> None:
+        super().__init__(ttl)
+        self.client = client
+        self.proxy = proxy
+        self.retry_count = retry_count
+        self.retry_4xx = retry_4xx
+        self.assets_server = assets_server
+        self.target_dir = target_dir
+
+    async def request(self, id: int) -> aiohttp.ClientResponse:
+        server = await self.assets_server()
+        retry_left = self.retry_count
+        while True:
+            response = await self.client.get(f"{server}/sfx/s{id}.ogg", proxy=self.proxy)
+            if response.ok or (retry_left is not None and retry_left <= 0) or (400 <= response.status <= 499 and not self.retry_4xx):
+                logger.log("DEBUG" if response.ok else "WARNING", f"{response.status} {response.method} {response.url}")
+                return response
+            await response.__aexit__(None, None, None)
+            logger.warning(f"{response.status} {response.method} {response.url} 剩余 {retry_left} 次重试")
+            retry_left = None if retry_left is None else retry_left - 1
+
+    def ensure(self, id: int) -> None:
+        if self.target_dir and os.path.exists(f"{self.target_dir}/s{id}.ogg"):
+            return
+        super().ensure(id)
 
 CONFIG = web.AppKey("CONFIG", Config)
 HTTP_CLIENT = web.AppKey("HTTP_CLIENT", aiohttp.ClientSession)
 BACKUP_SCHEDULER = web.AppKey("BACKUP_SCHEDULER", BackupScheduler)
 API_MANAGER = web.AppKey("API_MANAGER", ApiManager)
 SONG_INFO_CACHE = web.AppKey("SONG_INFO_CACHE", SongInfoCache)
+SONG_PREFETCHER = web.AppKey("SONG_PREFETCHER", SongPrefetcher)
+SFX_PREFETCHER = web.AppKey("SFX_PREFETCHER", SfxPrefetcher)
 routes = web.RouteTableDef()
 form_vaildator = TypeAdapter(dict[str, str])
 
@@ -453,13 +736,12 @@ async def _(request: web.Request) -> web.Response:
 async def _(request: web.Request) -> web.Response:
     async with request.app[API_MANAGER]["accounts/loginGJAccount"](request) as response:
         data = await response.text()
-        try:
-            return web.Response(body=str(int(data)))
-        except ValueError:
-            account_id, uuid = data.split(",")
-            form = form_vaildator.validate_python(await request.post())
-            request.app[CONFIG].backup_auth.write_gjp2(int(account_id), form["gjp2"])
-            return web.Response(body=data)
+        if is_int(data) or not response.ok:
+            return web.Response(status=response.status, body=data)
+        account_id, uuid = data.split(",")
+        form = form_vaildator.validate_python(await request.post())
+        request.app[CONFIG].backup_auth.write_gjp2(int(account_id), form["gjp2"])
+        return web.Response(body=data)
 
 
 @routes.post("/{pad:/*}getGJSongInfo.php")
@@ -473,7 +755,8 @@ async def _(request: web.Request) -> web.StreamResponse:
     info = await request.app[SONG_INFO_CACHE].get(song_id)
     if isinstance(info, int):
         return web.Response(body=str(info))
-    if info[10] != "CUSTOMURL":
+    url = info.get(10, "")
+    if url and url != "CUSTOMURL":
         info[10] = f"{request.url.origin()}/song/{info[1]}"
     return web.Response(body=SongInfo.dump(info))
 
@@ -485,19 +768,19 @@ async def _(request: web.Request) -> web.StreamResponse:
         return await request.app[API_MANAGER].getGJLevels21.stream(request)
     async with request.app[API_MANAGER].getGJLevels21(request) as response:
         data = await response.text()
-        try:
-            return web.Response(body=str(int(data)))
-        except ValueError:
-            data = data.split("#")
-            songs = data[2].split("~:~")
-            for i, song in enumerate(songs):
-                info = SongInfo.load(song)
-                request.app[SONG_INFO_CACHE].insert(int(info[1]), info)
-                if info[10] != "CUSTOMURL":
-                    info[10] = f"{request.url.origin()}/song/{info[1]}"
-                songs[i] = SongInfo.dump(info)
-            data[2] = "~:~".join(songs)
-            return web.Response(body="#".join(data))
+        if is_int(data) or not response.ok:
+            return web.Response(status=response.status, body=data)
+        data = data.split("#")
+        songs = data[2].split("~:~")
+        for i, song in enumerate(songs):
+            info = SongInfo.load(song)
+            request.app[SONG_INFO_CACHE].insert(int(info[1]), info)
+            url = info.get(10, "")
+            if url and url != "CUSTOMURL":
+                info[10] = f"{request.url.origin()}/song/{info[1]}"
+            songs[i] = SongInfo.dump(info)
+        data[2] = "~:~".join(songs)
+        return web.Response(body="#".join(data))
 
 
 @routes.post("/{pad:/*}getCustomContentURL.php")
@@ -507,57 +790,49 @@ async def _(request: web.Request) -> web.StreamResponse:
     return web.Response(body=f"{request.url.origin()}/assets")
 
 
-@routes.get(r"/assets/{path:.*}")
+@routes.get(r"/assets/music/{song_id:\d+}.ogg")
+@routes.get(r"/assets/sfx/s{sfx_id:\d+}.ogg")
 async def _(request: web.Request) -> web.StreamResponse:
     config = request.app[CONFIG]
     if not config.assets_enabled:
         return web.HTTPForbidden()
-    server = config.assets_server or await AssetsServer.fetch(request.app[API_MANAGER], config.assets_server_ttl)
-    url = f"{server}{request.path_qs.removesuffix('/assets')}"
-    retry_left = config.assets_retry_count
-    while True:
-        async with request.app[HTTP_CLIENT].get(url, proxy=config.assets_proxy_str) as response:
-            if response.ok or retry_left == 0 or (400 <= response.status <= 499 and not config.assets_retry_4xx):
-                logger.log("DEBUG" if response.ok else "WARNING", f"{response.status} {response.method} {response.url}")
-                return await stream_response(request, response)
-            retry_left = None if retry_left is None else retry_left - 1
-            logger.warning(f"{response.status} {response.method} {response.url} 剩余 {retry_left} 次重试")
+
+    if "song_id" in request.match_info:
+        prefetcher = request.app[SONG_PREFETCHER]
+        id = int(request.match_info["song_id"])
+    else:
+        prefetcher = request.app[SFX_PREFETCHER]
+        id = int(request.match_info["sfx_id"])
+
+    return await prefetcher.stream(request, id, config.prefetch)
 
 
 @routes.get(r"/song/{song_id:\d+}")
 async def _(request: web.Request) -> web.StreamResponse:
-    async def fetch_url() -> str:
-        nonlocal url
-        if url is not None:
-            return url
-        info = await request.app[SONG_INFO_CACHE].get(song_id)
-        if isinstance(info, int) or info[10] == "CUSTOMURL":
-            raise web.HTTPNotFound(body=str(info))
-        url = info[10]
-        return url
-
     config = request.app[CONFIG]
     if not config.song_enabled:
         return web.HTTPForbidden()
-    url = None
-    ngproxy_available = True
-    song_id = int(request.match_info["song_id"])
-    retry_left = config.song_retry_count
-    while True:
-        if config.song_ngproxy and ngproxy_available:
-            async with request.app[HTTP_CLIENT].get(f"https://ng.geometrydashchinese.com/api/{song_id}/download") as response:
-                logger.log("DEBUG" if response.ok else "WARNING", f"{response.status} {response.method} {response.url}")
-                if response.ok:
-                    return await stream_response(request, response)
-                # NGProxy 似乎不返回 4xx，只返回 5xx，只是以防万一
-                if not config.song_retry_4xx and (400 <= response.status <= 499):
-                    ngproxy_available = False
-        async with request.app[HTTP_CLIENT].get(await fetch_url(), proxy=config.song_proxy_str) as response:
-            if response.ok or retry_left == 0 or (400 <= response.status <= 499 and not config.song_retry_4xx):
-                logger.log("DEBUG" if response.ok else "WARNING", f"{response.status} {response.method} {response.url}")
-                return await stream_response(request, response)
-        retry_left = None if retry_left is None else retry_left - 1
-        logger.warning(f"{response.status} {response.method} {response.url} 剩余 {retry_left} 次重试")
+
+    return await request.app[SONG_PREFETCHER].stream(request, int(request.match_info["song_id"]), config.prefetch)
+
+
+@routes.post("/{pad:/*}downloadGJLevel22.php")
+async def _(request: web.Request) -> web.StreamResponse:
+    async with request.app[API_MANAGER].downloadGJLevel22(request) as response:
+        data = await response.text()
+        if is_int(data) or not response.ok:
+            return web.Response(status=response.status, body=data)
+        level = data.split("#")[0].split(":")
+        level = {int(level[i]): level[i + 1] for i in range(0, len(level), 2)}
+        # 预载单首音乐意义不大
+        # request.app[SONG_PREFETCHER].ensure(int(level[35]))  # song
+        if 52 in level:  # songs
+            for song_id in level[52].split(","):
+                request.app[SONG_PREFETCHER].ensure(int(song_id))
+        if 53 in level:  # sfx
+            for sfx_id in level[53].split(","):
+                request.app[SFX_PREFETCHER].ensure(int(sfx_id))
+        return web.Response(body=data)
 
 
 @routes.post(r"/{pad:/*}{api:(accounts/)?[A-Za-z0-9]+}.php")
@@ -569,9 +844,18 @@ async def setup_http_client(app: web.Application) -> AsyncGenerator[None, None]:
     http_client = app[HTTP_CLIENT] = aiohttp.ClientSession()
     config = app[CONFIG]
     app[API_MANAGER] = api_manager = ApiManager(http_client, str(config.game_server).removesuffix("/"), config.game_retry_count, config.game_retry_4xx, proxy=config.game_proxy_str)
+    if config.assets_server is None:
+        assets_server = AssetsServerCached(api_manager.getCustomContentURL, config.assets_server_ttl)
+    else:
+        assets_server = AssetsServerStatic(str(config.assets_server))
     if config.song_enabled:
         app[SONG_INFO_CACHE] = song_info_cache = SongInfoCache(api_manager["/getGJSongInfo" if config.song_bypass_ngproxy else "getGJSongInfo"], config.song_info_ttl)
         song_info_cache.clean()
+        app[SONG_PREFETCHER] = song_prefetcher = SongPrefetcher(http_client, config.song_proxy_str, song_info_cache, config.prefetch_ttl, config.song_retry_count, config.song_retry_4xx, config.song_ngproxy, assets_server, config.prefetch_target_dir)
+        song_prefetcher.clean()
+    if config.assets_enabled:
+        app[SFX_PREFETCHER] = sfx_prefetcher = SfxPrefetcher(http_client, config.song_proxy_str, config.prefetch_ttl, config.song_retry_count, config.song_retry_4xx, assets_server, config.prefetch_target_dir)
+        sfx_prefetcher.clean()
     yield
     await http_client.close()
 
