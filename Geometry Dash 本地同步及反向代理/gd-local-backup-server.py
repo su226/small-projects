@@ -201,11 +201,11 @@ class BackupScheduler:
                 cclocallevels = base64.urlsafe_b64encode(f.read()).decode()
             form = {"accountID": account_id, "saveData": f"{ccgamemanager};{cclocallevels}", **task.token}
             async with self.client.post(f"{task.server_str}/database/accounts/backupGJAccountNew.php", data=form, **self.kw) as response:
-                result = await response.text()
-                if result == "1":
+                result = await response.read()
+                if response.ok and result == b"1":
                     logger.success(f"备份 {account_id} 的数据成功")
                     return
-                if task.retry_left != 0 and (400 <= response.status <= 499 and not self.retry_4xx):
+                if task.retry_left != 0 and (self.retry_4xx or not 400 <= response.status <= 499):
                     logger.warning(f"备份 {account_id} 的数据失败，响应: {result!r}，剩余 {task.retry_left} 次重试，下一次在 {self.retry_interval} 秒后")
                     task.retry_left = None if task.retry_left is None else task.retry_left - 1
                     self.schedule(account_id, task, self.retry_interval)
@@ -227,12 +227,15 @@ async def stream_response(request: web.BaseRequest, response: aiohttp.ClientResp
     return stream
 
 
-def is_int(data: str) -> bool:
+async def api_read(response: aiohttp.ClientResponse) -> str | web.Response:
+    text = await response.text(errors="replace")
+    if not text or not response.ok:
+        return web.Response(status=response.status, body=text)
     try:
-        int(data)
-        return True
+        return web.Response(status=response.status, body=str(int(text)))
     except ValueError:
-        return False
+        pass
+    return text
 
 
 class ApiManager:
@@ -328,8 +331,8 @@ class SongInfoCache:
         except FileNotFoundError:
             pass
         async with self.api(data={"songID": id, "secret": "Wmfd2893gb7"}) as response:
-            info = await response.text()
-            if not response.ok:
+            info = await response.text(errors="replace")
+            if not response.ok or not info:
                 try:
                     return int(info)
                 except ValueError:
@@ -399,10 +402,11 @@ class AssetsServerCached(AssetsServer):
             except FileNotFoundError:
                 pass
             async with self.api() as response:
-                cdn = await response.text()
-            if response.ok:
-                with open(f"assets_server.json", "w") as f:
-                    pydantic_dump(AssetsServerInfo(cdn=cdn), f)
+                cdn = await api_read(response)
+            if isinstance(cdn, web.Response):
+                return ""
+            with open(f"assets_server.json", "w") as f:
+                pydantic_dump(AssetsServerInfo(cdn=cdn), f)
             return cdn
 
 
@@ -708,7 +712,11 @@ async def _(request: web.Request) -> web.Response:
     if config.backup_enabled != "local":
         if not config.backup_server:
             async with request.app[API_MANAGER].getAccountURL(data={"accountID": account_id, "type": 1, "secret": "Wmfd2893gb7"}) as response:
-                server = AnyUrl(await response.text())
+                data = await api_read(response)
+                if isinstance(data, web.Response):
+                    logger.warning(f"获取 {account_id} 的备份服务器失败，响应: {data.body!r}")
+                    return data
+                server = AnyUrl(data)
         else:
             server = config.backup_server
         request.app[BACKUP_SCHEDULER].schedule(account_id, BackupTask(server=server, token=form, retry_left=config.backup_retry_count))
@@ -735,9 +743,9 @@ async def _(request: web.Request) -> web.Response:
 @routes.post("/{pad:/*}accounts/loginGJAccount.php")
 async def _(request: web.Request) -> web.Response:
     async with request.app[API_MANAGER]["accounts/loginGJAccount"](request) as response:
-        data = await response.text()
-        if is_int(data) or not response.ok:
-            return web.Response(status=response.status, body=data)
+        data = await api_read(response)
+        if isinstance(data, web.Response):
+            return data
         account_id, uuid = data.split(",")
         form = form_vaildator.validate_python(await request.post())
         request.app[CONFIG].backup_auth.write_gjp2(int(account_id), form["gjp2"])
@@ -767,9 +775,9 @@ async def _(request: web.Request) -> web.StreamResponse:
     if not config.song_enabled:
         return await request.app[API_MANAGER].getGJLevels21.stream(request)
     async with request.app[API_MANAGER].getGJLevels21(request) as response:
-        data = await response.text()
-        if is_int(data) or not response.ok:
-            return web.Response(status=response.status, body=data)
+        data = await api_read(response)
+        if isinstance(data, web.Response):
+            return data
         data = data.split("#")
         songs = data[2].split("~:~")
         for i, song in enumerate(songs):
@@ -819,9 +827,9 @@ async def _(request: web.Request) -> web.StreamResponse:
 @routes.post("/{pad:/*}downloadGJLevel22.php")
 async def _(request: web.Request) -> web.StreamResponse:
     async with request.app[API_MANAGER].downloadGJLevel22(request) as response:
-        data = await response.text()
-        if is_int(data) or not response.ok:
-            return web.Response(status=response.status, body=data)
+        data = await api_read(response)
+        if isinstance(data, web.Response):
+            return data
         level = data.split("#")[0].split(":")
         level = {int(level[i]): level[i + 1] for i in range(0, len(level), 2)}
         # 预载单首音乐意义不大
