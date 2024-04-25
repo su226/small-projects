@@ -101,7 +101,7 @@ class Config(BaseModel):
     host: IPvAnyAddress = Field(default="0.0.0.0")
     port: int = Field(default=80, ge=0, lt=65536)
     game_server: HttpUrl = Field(default=OFFICIAL_SERVER)
-    game_retry_count: None | NonNegativeInt = None
+    game_retry_count: None | NonNegativeInt = 5
     game_retry_4xx: bool = False
     game_proxy: None | HttpUrl = None
     backup_enabled: bool | Literal["local"] = True
@@ -114,13 +114,13 @@ class Config(BaseModel):
     song_enabled: bool = True
     song_ngproxy: bool = True
     song_bypass_ngproxy: bool = True
-    song_retry_count: None | NonNegativeInt = None
+    song_retry_count: None | NonNegativeInt = 5
     song_retry_4xx: bool = False
     song_proxy: None | HttpUrl = None
     song_info_ttl: None | NonNegativeFloat = 600
     assets_enabled: bool = True
     assets_server: None | HttpUrl = None
-    assets_retry_count: None | NonNegativeInt = None
+    assets_retry_count: None | NonNegativeInt = 5
     assets_retry_4xx: bool = False
     assets_proxy: None | HttpUrl = None
     assets_server_ttl: None | NonNegativeFloat = 600
