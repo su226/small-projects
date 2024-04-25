@@ -45,7 +45,7 @@ TIME_STR = time.strftime("%Y-%m-%d-%H-%M-%S")
 logger.info("Logging in source vault.")
 sp.run(["bw", "config", "server", SERVER_SRC, "--raw"], env=ENV_SRC, check=True)
 # Exit code for already logged in and login failed are both 1, run `bw login --check` first.
-if sp.run(["bw", "login", "--check", "--raw"], env=ENV_SRC).returncode != 0:
+if sp.run(["bw", "login", "--check", "--raw"], env=ENV_SRC, stderr=sp.DEVNULL).returncode != 0:
     sp.run(["bw", "login", EMAIL_SRC, "--apikey", "--raw"], env=ENV_SRC, check=True)
 
 logger.info("Backing up source vault.")
@@ -61,7 +61,7 @@ sp.run(["gpg", "--homedir", "gnupg", "--symmetric", "--cipher-algo", "AES256", "
 
 logger.info("Logging in destination vault.")
 sp.run(["bw", "config", "server", SERVER_DST, "--raw"], env=ENV_DST, check=True)
-if sp.run(["bw", "login", "--check", "--raw"], env=ENV_DST).returncode != 0:
+if sp.run(["bw", "login", "--check", "--raw"], env=ENV_DST, stderr=sp.DEVNULL).returncode != 0:
     sp.run(["bw", "login", EMAIL_DST, "--apikey", "--raw"], env=ENV_DST, check=True)
 
 logger.info("Backing up destination vault.")
