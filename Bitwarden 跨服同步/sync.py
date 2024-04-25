@@ -50,6 +50,7 @@ if sp.run(["bw", "login", "--check", "--raw"], env=ENV_SRC, stderr=sp.DEVNULL).r
 
 logger.info("Backing up source vault.")
 ENV_SRC["BW_SESSION"] = sp.run(["bw", "unlock", PASSWORD_SRC, "--raw"], env=ENV_SRC, check=True, stdout=sp.PIPE, text=True).stdout
+sp.run(["bw", "sync", "--raw"], env=ENV_SRC, check=True)
 backup_src = sp.run(["bw", "export", "--format", "json", "--raw"], env=ENV_SRC, check=True, stdout=sp.PIPE, text=True).stdout
 backup_src = json.dumps(json.loads(backup_src), separators=(",", ":"))
 os.makedirs("src_backup", 0o700, True)
@@ -66,6 +67,7 @@ if sp.run(["bw", "login", "--check", "--raw"], env=ENV_DST, stderr=sp.DEVNULL).r
 
 logger.info("Backing up destination vault.")
 ENV_DST["BW_SESSION"] = sp.run(["bw", "unlock", PASSWORD_DST, "--raw"], env=ENV_DST, check=True, stdout=sp.PIPE, text=True).stdout
+sp.run(["bw", "sync", "--raw"], env=ENV_DST, check=True)
 backup_dst = sp.run(["bw", "export", "--format", "json", "--raw"], env=ENV_DST, check=True, stdout=sp.PIPE, text=True).stdout
 backup_dst = json.dumps(json.loads(backup_dst), separators=(",", ":"))
 os.makedirs("dst_backup", 0o700, True)
@@ -107,6 +109,7 @@ if response.status_code != 200:
     sys.exit(1)
 
 logger.info("Syncing destination vault.")
+sp.run(["bw", "sync", "--raw"], env=ENV_DST, check=True)
 with NamedTemporaryFile("w") as f:
     f.write(backup_src)
     f.flush()
