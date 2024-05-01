@@ -101,7 +101,7 @@ class Config(BaseModel):
     host: IPvAnyAddress = Field(default="0.0.0.0")
     port: int = Field(default=80, ge=0, lt=65536)
     game_server: HttpUrl = Field(default=OFFICIAL_SERVER)
-    game_retry_count: None | NonNegativeInt = 5
+    game_retry_count: None | NonNegativeInt = 4
     game_retry_4xx: bool = False
     game_proxy: None | HttpUrl = None
     backup_enabled: bool | Literal["local"] = True
@@ -114,13 +114,13 @@ class Config(BaseModel):
     song_enabled: bool = True
     song_ngproxy: bool = True
     song_bypass_ngproxy: bool = True
-    song_retry_count: None | NonNegativeInt = 5
+    song_retry_count: None | NonNegativeInt = 4
     song_retry_4xx: bool = False
     song_proxy: None | HttpUrl = None
     song_info_ttl: None | NonNegativeFloat = 600
     assets_enabled: bool = True
     assets_server: None | HttpUrl = None
-    assets_retry_count: None | NonNegativeInt = 5
+    assets_retry_count: None | NonNegativeInt = 4
     assets_retry_4xx: bool = False
     assets_proxy: None | HttpUrl = None
     assets_server_ttl: None | NonNegativeFloat = 600
@@ -438,6 +438,7 @@ class PrefetchTask:
             try_remove(f"{self.prefetcher.DIR}/{self.id}.json")
             try_remove(f"{self.prefetcher.DIR}/{self.id}")
             response = await self.prefetcher.request(self.id)
+            os.makedirs(self.prefetcher.DIR, exist_ok=True)
             if isinstance(response, str):
                 with open(f"{self.prefetcher.DIR}/{self.id}.json") as f:
                     pydantic_dump(PrefetchInfo(error=response), f)
@@ -447,7 +448,6 @@ class PrefetchTask:
                 if not response.ok:
                     self.prepare_future.set_result((response.status, await response.text()))
                     return
-                os.makedirs(self.prefetcher.DIR, exist_ok=True)
                 with open(f"{self.prefetcher.DIR}/{self.id}", "wb") as f:
                     self.prepare_future.set_result(response.headers["Content-Length"])
                     data, _ = await response.content.readchunk()
@@ -459,7 +459,6 @@ class PrefetchTask:
             logger.info(f"下载完成 {self.prefetcher.DIR} {self.id}")
             with open(f"{self.prefetcher.DIR}/{self.id}.json", "w") as f:
                 pydantic_dump(PrefetchInfo(), f)
-            os.rename(f"{self.prefetcher.DIR}/{self.id}", f"{self.prefetcher.DIR}/{self.id}")
         finally:
             self.finished = True
             if self.prefetcher.tasks.get(self.id) == self:
@@ -779,7 +778,7 @@ async def _(request: web.Request) -> web.StreamResponse:
         if isinstance(data, web.Response):
             return data
         data = data.split("#")
-        songs = data[2].split("~:~")
+        songs = data[2].split("~:~") if data[2] else []
         for i, song in enumerate(songs):
             info = SongInfo.load(song)
             request.app[SONG_INFO_CACHE].insert(int(info[1]), info)

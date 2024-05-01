@@ -75,7 +75,7 @@ waitpid -e $PID 2> /dev/null
     "host": "0.0.0.0", // 监听的 IP 地址
     "port": 80, // 监听的端口
     "game_server": "https://www.boomlings.com/database", // 反代的上游服务器
-    "game_retry_count": 5, // API 重试次数，null 为无限重试
+    "game_retry_count": 4, // API 重试次数，null 为无限重试
     "game_retry_4xx": false, // 在 API 返回 4xx 错误码时重试，为 false 时只重试 5xx 错误码
     "game_proxy": null, // API 代理服务器（由于 AIOHTTP 限制，只支持 HTTP 代理）
     "backup_enabled": true, // 是否启用本地备份，设置为 "local" 时将禁用后台上传
@@ -94,13 +94,13 @@ waitpid -e $PID 2> /dev/null
     "song_enabled": true, // 是否反代音乐
     "song_ngproxy": true, // 是否优先使用 NGProxy，当 NGProxy 不可用时回退到原链接下载
     "song_bypass_ngproxy": true, // 在获取原链接时绕过 NGProxy，只保证在使用 GDProxy 时可用
-    "song_retry_count": 5, // 下歌的重试次数，null 为无限重试
+    "song_retry_count": 4, // 下歌的重试次数，null 为无限重试
     "song_retry_4xx": false, // 参见 game_retry_4xx
     "song_proxy": null, // 参见 game_proxy
     "song_info_ttl": 600, // 音乐元数据的缓存时间，单位为秒，过期的缓存会自动删除，null 为永久缓存（不建议设置为 0，会导致下载音乐时获取两次元数据）
     "assets_enabled": true, // 是否反代音效
     "assets_server": null, // 自定义音效服务器，null 为从游戏服务器获取
-    "assets_retry_count": 5, // 音效的重试次数，null 为无限重试
+    "assets_retry_count": 4, // 音效的重试次数，null 为无限重试
     "assets_retry_4xx": false,  // 参见 game_retry_4xx
     "assets_proxy": null, // 参见 game_proxy
     "assets_server_ttl": 600, // 从游戏服务器获取的音效服务器地址的缓存时间，单位为秒，null 为永久缓存（不建议设置为 0，会导致下载音效时获取多次服务器地址）
