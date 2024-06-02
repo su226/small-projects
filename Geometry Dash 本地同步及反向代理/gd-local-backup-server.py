@@ -395,7 +395,7 @@ class AssetsServerCached(AssetsServer):
     async def __call__(self) -> str:
         async with self.lock:
             try:
-                with open(f"assets_server.json", "r") as f:
+                with open("assets_server.json", "r") as f:
                     cache = AssetsServerInfo.model_validate(json.load(f))
                 if self.ttl is None or time.time() - cache.time < self.ttl:
                     return cache.cdn
@@ -405,7 +405,7 @@ class AssetsServerCached(AssetsServer):
                 cdn = await api_read(response)
             if isinstance(cdn, web.Response):
                 return ""
-            with open(f"assets_server.json", "w") as f:
+            with open("assets_server.json", "w") as f:
                 pydantic_dump(AssetsServerInfo(cdn=cdn), f)
             return cdn
 
@@ -768,6 +768,18 @@ async def _(request: web.Request) -> web.StreamResponse:
     return web.Response(body=SongInfo.dump(info))
 
 
+def process_song_list(cache: SongInfoCache, data: str, origin: str) -> str:
+    songs = data.split("~:~") if data else []
+    for i, song in enumerate(songs):
+        info = SongInfo.load(song)
+        cache.insert(int(info[1]), info)
+        url = info.get(10, "")
+        if url and url != "CUSTOMURL":
+            info[10] = f"{origin}/song/{info[1]}"
+        songs[i] = SongInfo.dump(info)
+    return "~:~".join(songs)
+
+
 @routes.post("/{pad:/*}getGJLevels21.php")
 async def _(request: web.Request) -> web.StreamResponse:
     config = request.app[CONFIG]
@@ -778,15 +790,8 @@ async def _(request: web.Request) -> web.StreamResponse:
         if isinstance(data, web.Response):
             return data
         data = data.split("#")
-        songs = data[2].split("~:~") if data[2] else []
-        for i, song in enumerate(songs):
-            info = SongInfo.load(song)
-            request.app[SONG_INFO_CACHE].insert(int(info[1]), info)
-            url = info.get(10, "")
-            if url and url != "CUSTOMURL":
-                info[10] = f"{request.url.origin()}/song/{info[1]}"
-            songs[i] = SongInfo.dump(info)
-        data[2] = "~:~".join(songs)
+        if len(data) >= 3:
+            data[2] = process_song_list(request.app[SONG_INFO_CACHE], data[2], request.url.origin())
         return web.Response(body="#".join(data))
 
 
@@ -829,7 +834,8 @@ async def _(request: web.Request) -> web.StreamResponse:
         data = await api_read(response)
         if isinstance(data, web.Response):
             return data
-        level = data.split("#")[0].split(":")
+        data = data.split("#")
+        level = data[0].split(":")
         level = {int(level[i]): level[i + 1] for i in range(0, len(level), 2)}
         # 预载单首音乐意义不大
         # request.app[SONG_PREFETCHER].ensure(int(level[35]))  # song
@@ -839,7 +845,9 @@ async def _(request: web.Request) -> web.StreamResponse:
         if 53 in level:  # sfx
             for sfx_id in level[53].split(","):
                 request.app[SFX_PREFETCHER].ensure(int(sfx_id))
-        return web.Response(body=data)
+        if len(data) >= 5:
+            data[4] = process_song_list(request.app[SONG_INFO_CACHE], data[4], request.url.origin())
+        return web.Response(body="#".join(data))
 
 
 @routes.post(r"/{pad:/*}{api:(accounts/)?[A-Za-z0-9]+}.php")
@@ -903,7 +911,7 @@ def main() -> None:
     app.cleanup_ctx.append(setup_http_client)
     if config.backup_enabled:
         app.cleanup_ctx.append(setup_backup_scheduler)
-    logger.info(f"Geometry Dash 本地同步 & 反向代理")
+    logger.info("Geometry Dash 本地同步 & 反向代理")
     logger.info(f"游戏服务器 {config.game_server}")
     logger.info(f"备份服务器 {config.backup_server_repr}")
     web.run_app(app, host=str(config.host), port=config.port, print=aiohttp_print)
