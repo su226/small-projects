@@ -6,8 +6,13 @@ from urllib.parse import urlparse
 
 ORIG_URL_HTTPS = "https://www.boomlings.com/database"
 ORIG_URL_HTTP = urlparse(ORIG_URL_HTTPS)._replace(scheme="http").geturl()
+EXECUTABLE = "GeometryDash.exe"
 
-name = input("Server Name: ")
+if not os.path.isfile(EXECUTABLE):
+  print(f"{EXECUTABLE} not found.")
+  sys.exit(1)
+
+name = input("Server name: ")
 url = input("Server URL: ").rstrip("/")
 
 if len(url) < len(ORIG_URL_HTTPS):
@@ -21,29 +26,28 @@ else:
   print(f"URL is too long. Max length for HTTP URL is {len(ORIG_URL_HTTP)} characters, for HTTPS URL is {len(ORIG_URL_HTTPS)} characters. Current URL {url!r} is {len(url)} characters.")
   sys.exit(1)
 
-if not os.path.isfile("GeometryDash.exe"):
-  print("GeometryDash.exe not found.")
-  sys.exit(1)
-
-with open("GeometryDash.exe", "rb") as f:
+with open(EXECUTABLE, "rb") as f:
   data = f.read()
+  orig_len = len(data)
+
   bytes_orig_url_https = ORIG_URL_HTTPS.encode()
   bytes_replace_url_https = replace_url_https.encode()
   assert len(bytes_orig_url_https) == len(bytes_replace_url_https)
-  count = data.count(bytes_orig_url_https)
-  if not count:
-    print(f"{ORIG_URL_HTTPS!r} not found in GeometryDash.exe, is it valid or already patched?")
+  if bytes_orig_url_https not in data:
+    print(f"{ORIG_URL_HTTPS!r} not found in {EXECUTABLE}, is it valid or already patched?")
     sys.exit(1)
   data = data.replace(bytes_orig_url_https, bytes_replace_url_https)
+
   base64_orig_url_http = base64.b64encode(ORIG_URL_HTTP.encode())
   base64_replace_url_http = base64.b64encode(replace_url_http.encode())
   assert len(base64_orig_url_http) == len(base64_replace_url_http)
-  count = data.count(base64_orig_url_http)
-  if not count:
-    print(f"{base64_orig_url_http.decode()!r} (base64 of {ORIG_URL_HTTP!r}) not found in GeometryDash.exe, is it valid or already patched?")
+  if base64_orig_url_http not in data:
+    print(f"{base64_orig_url_http.decode()!r} (base64 of {ORIG_URL_HTTP!r}) not found in {EXECUTABLE}, is it valid or already patched?")
     sys.exit(1)
   data = data.replace(base64_orig_url_http, base64_replace_url_http)
 
-with open(f"{name}.exe", "wb") as f:
+  assert len(data) == orig_len
+
+with open(f"{name}{os.path.splitext(EXECUTABLE)[1]}", "wb") as f:
   f.write(data)
   print(f"Writed executable at {f.name}")

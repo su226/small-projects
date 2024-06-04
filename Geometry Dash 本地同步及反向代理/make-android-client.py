@@ -9,6 +9,10 @@ ORIG_URL_HTTP = urlparse(ORIG_URL_HTTPS)._replace(scheme="http").geturl()
 ORIG_PACKAGE = "com.robtopx.geometryjump"
 EXECUTABLE = "libcocos2dcpp.so"
 
+if not os.path.isfile(EXECUTABLE):
+  print(f"{EXECUTABLE} not found.")
+  sys.exit(1)
+
 name = input("Server name: ")
 url = input("Server URL: ").rstrip("/")
 package = input("Package name (empty for unchanged): ")
@@ -27,11 +31,7 @@ else:
 if package and len(package) != len(ORIG_PACKAGE):
   print(f"Package name should be EXACTLY {len(ORIG_PACKAGE)} characters. Current package name {package!r} is {len(package)} characters.")
 
-if not os.path.isfile(f"{EXECUTABLE}"):
-  print(f"{EXECUTABLE} not found.")
-  sys.exit(1)
-
-with open(f"{EXECUTABLE}", "rb") as f:
+with open(EXECUTABLE, "rb") as f:
   data = f.read()
   orig_len = len(data)
 
