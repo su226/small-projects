@@ -11,10 +11,9 @@ body {
   font-family: inherit;
 }
 
-[data-icalingua-theme="light"] {
+[data-icalingua-theme="light"],
+[data-icalingua-theme="lighter"] {
   --su226-link-color: #1976d2;
-  --su226-chat-group-selected-color: #90caf9;
-  --su226-chat-group-new-color: #e57373;
   --su226-scrollbar-track-color: transparent;
   --su226-scrollbar-thumb-color: rgba(0, 0, 0, 0.38);
   --su226-scrollbar-thumb-color-hover: rgba(0, 0, 0, 0.48);
@@ -142,6 +141,18 @@ body {
   --su226-checkbox-color: rgba(0, 0, 0, 0.6);
   --su226-checkbox-checked-color: #1976d2;
   --su226-checkbox-mark-color: rgba(255, 255, 255, 0.7);
+}
+
+[data-icalingua-theme="light"] {
+  --su226-chat-group-color: #fff;
+  --su226-chat-group-selected-color: #90caf9;
+  --su226-chat-group-new-color: #e57373;
+}
+
+[data-icalingua-theme="lighter"] {
+  --su226-chat-group-color: rgba(0, 0, 0, 0.6);
+  --su226-chat-group-selected-color: #1976d2;
+  --su226-chat-group-new-color: #e57373;
 }
 
 [data-icalingua-theme="dark"] {
@@ -394,16 +405,21 @@ body {
 }
 
 .rooms-panel .sub-avatar {
-  outline: 2px solid var(--panel-background);
-  transition: outline-color .3s;
+  box-shadow: 0 0 0 2px var(--panel-background);
+  transition: box-shadow .3s;
+  background-color: var(--panel-background);
+}
+
+.sub-avatar img {
+  background-color: var(--chat-message-bg-color-image);
 }
 
 .rooms-panel a>:hover .sub-avatar {
-  outline-color: var(--panel-item-bg-hover);
+  box-shadow: 0 0 0 2px var(--panel-item-bg-hover);
 }
 
 .rooms-panel a>.selected .sub-avatar {
-  outline-color: var(--panel-item-bg);
+  box-shadow: 0 0 0 2px var(--panel-item-bg);
 }
 
 /* 联系人 / 群成员 */
@@ -685,14 +701,14 @@ div.contact-entry-entry {
 }
 
 .chat-group {
-  color: #fff;
+  color: var(--su226-chat-group-color, #fff);
 }
 
 .chat-group .selected {
   color: var(--su226-chat-group-selected-color, #19bdd2);
 }
 
-.chat-group .el-icon-chat-square {
+.chat-group i:first-child {
   margin-bottom: 4px;
 }
 

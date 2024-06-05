@@ -1,0 +1,56 @@
+{
+  "baseTheme": "light",
+  "general": {
+    "color": "rgba(0, 0, 0, 0.87)",
+    "colorPlaceholder": "rgba(0, 0, 0, 0.6)",
+    "colorSpinner": "#1976d2",
+    "backgroundInput": "rgba(0, 0, 0, 0.6)",
+    "borderStyle": "1px solid rgba(0, 0, 0, 0.12)"
+  },
+  "panel": {
+    "itemBg": "#c8dbf4",
+    "itemBgHover": "#f5f5f5",
+    "sideBar": "#f0f0f0",
+    "colorStickerType": "rgba(0, 0, 0, 0.6)",
+    "colorStickerHover": "rgba(0, 0, 0, 0.6)",
+    "colorStickerSelected": "#1976d2",
+    "colorName": "rgba(0, 0, 0, 0.87)",
+    "colorIcon": "rgba(0, 0, 0, 0.6)",
+    "colorDesc": "rgba(0, 0, 0, 0.6)",
+    "colorTimestamp": "rgba(0, 0, 0, 0.6)"
+  },
+  "header": {
+    "background": "#ffffff"
+  },
+  "content": {
+    "background": "#f9f9f9"
+  },
+  "footer": {
+    "background": "#ffffff",
+    "borderStyleInput": "none"
+  },
+  "message": {
+    "color": "rgba(0, 0, 0, 0.87)",
+    "colorDeleted": "rgba(0, 0, 0, 0.6)",
+    "colorReply": "rgba(0, 0, 0, 0.6)",
+    "colorReplyUsername": "rgba(0, 0, 0, 0.87)",
+    "colorUsername": "rgba(0, 0, 0, 0.6)",
+    "colorTimestamp": "rgba(0, 0, 0, 0.6)",
+    "colorSystem": "rgba(0, 0, 0, 0.6)",
+    "colorDate": "rgba(0, 0, 0, 0.6)",
+    "backgroundMe": "#bbdefb",
+    "backgroundSelected": "#cecece",
+    "backgroundDeleted": "#e7e7e7",
+    "backgroundReply": "rgba(0, 0, 0, 0.1)",
+    "backgroundScrollCounter": "#1976d2",
+    "backgroundSystem": "#e7e7e7",
+    "backgroundDate": "#e7e7e7"
+  },
+  "icons": {
+    "close": "rgba(0, 0, 0, 0.54)",
+    "closeOutline": "rgba(0, 0, 0, 0.54)",
+    "emoji": "rgba(0, 0, 0, 0.54)",
+    "paperclip": "rgba(0, 0, 0, 0.54)",
+    "sendDisabled": "rgba(0, 0, 0, 0.26)"
+  }
+}
