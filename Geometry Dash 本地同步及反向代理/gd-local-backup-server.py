@@ -772,8 +772,12 @@ def process_song_list(cache: SongInfoCache, data: str, origin: str) -> str:
     songs = data.split("~:~") if data else []
     for i, song in enumerate(songs):
         info = SongInfo.load(song)
+        # downloadGJLevel22 返回的 NCS 歌曲信息里的 10 不是 CUSTOMURL 而是 ncs.io 链接
+        if info.get(11, "0") == "1":
+            url = info[10] = "CUSTOMURL"
+        else:
+            url = info.get(10, "")
         cache.insert(int(info[1]), info)
-        url = info.get(10, "")
         if url and url != "CUSTOMURL":
             info[10] = f"{origin}/song/{info[1]}"
         songs[i] = SongInfo.dump(info)
