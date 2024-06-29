@@ -7,7 +7,6 @@
 * 在下载关卡时后台下载所有音乐和音效，实现并行下载音乐和音效
 * 在遇到 5xx 错误码时自动重试
 * 支持鉴权，可选配置白名单 / 黑名单
-* 在使用 GDProxy 时，可选绕过 [NGProxy](https://ng.geometrydashchinese.com) 而直接从 Newgrounds 下载音乐
 * 完全可配置
 
 ## 使用方法
@@ -17,7 +16,7 @@
 * loguru
 * pydantic
 
-在工作目录下创建配置文件 config.json 并启动，配置项参见下文。
+在工作目录下创建配置文件 config.json 并启动，配置项参见下文。如需使用 GDProxy，建议将 game_server 设置为 `https://dl.geometrydashchinese.com//`（注意末尾有两个斜杠）以绕过 GDProxy 对 API 的修改，直接访问到原始 API。
 
 如果你要将服务器暴露在公网上，请考虑设置备份白名单。
 
@@ -45,17 +44,22 @@
 
 ```bash
 #!/bin/bash
-DIR="$(dirname $0)"
+link_client() {
+  local DIR="$(realpath --relative-to . "$(dirname $0)")"
+  mv GeometryDash.exe "$DIR/GeometryDash.exe"
+  ln -s "$DIR/client.exe" GeometryDash.exe
+}
+
 # 将原始客户端链接到按上文方法制作的客户端（防止在 Steam 更新或检查完整性时恢复）
-[ -L GeometryDash.exe ] || ln -sf "$(realpath --relative-to . $DIR)/client.exe" GeometryDash.exe
+[ -L GeometryDash.exe ] || link_client
 # 后台启动服务器
-(cd $DIR && exec ./gd-local-backup-server.py) &
-PID=$!
+(cd "$(dirname $0)" && exec ./gd-local-backup-server.py) &
+SERVER_PID=$!
 # 启动游戏并等待结束
 "$@"
-# 结束服务器
-kill $PID
-waitpid -e $PID 2> /dev/null
+# 结束服务器（注：kill 是 bash 内建，不支持 --timeout，此处使用 $(type -P kill) 调用 coreutils 的 kill）
+"$(type -P kill)" --timeout 5000 KILL $SERVER_PID
+waitpid -e $SERVER_PID
 ```
 
 目录中还应放入制作好的客户端 client.exe，以及如下配置文件 config.json。
@@ -92,8 +96,6 @@ waitpid -e $PID 2> /dev/null
         "gjp2_override": {} // 手动覆盖指定帐号的 gjp2，可以为一个 SHA1 字符串、"auto"（自动获取）或 "ignore"（忽略 gjp2）
     },
     "song_enabled": true, // 是否反代音乐
-    "song_ngproxy": true, // 是否优先使用 NGProxy，当 NGProxy 不可用时回退到原链接下载
-    "song_bypass_ngproxy": true, // 在获取原链接时绕过 NGProxy，只保证在使用 GDProxy 时可用
     "song_retry_count": 4, // 下歌的重试次数，null 为无限重试
     "song_retry_4xx": false, // 参见 game_retry_4xx
     "song_proxy": null, // 参见 game_proxy
@@ -104,6 +106,7 @@ waitpid -e $PID 2> /dev/null
     "assets_retry_4xx": false,  // 参见 game_retry_4xx
     "assets_proxy": null, // 参见 game_proxy
     "assets_server_ttl": 600, // 从游戏服务器获取的音效服务器地址的缓存时间，单位为秒，null 为永久缓存（不建议设置为 0，会导致下载音效时获取多次服务器地址）
+    "ngproxy": true, // 是否优先使用 NGProxy，当 NGProxy 不可用时回退到原链接下载
     "prefetch": true, // 在下载关卡时预载音乐和音效，所有的音乐和音效将会并行下载
     "prefetch_ttl": 600, // 预载文件的保留时长，单位为秒，过期的缓存会自动删除，null 为永久缓存（不建议设置为 0，很显然）
     "prefetch_target_dir": null // 存档目录，在本地运行时建议指定此选项，预载时将会跳过存档目录中已有的音乐和音效
