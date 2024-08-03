@@ -67,7 +67,12 @@ class KeyDialog(Gtk.MessageDialog):
       button.show()    
 
   def self_button_release(self, entry, button):
-    self.code = -button.button
+    if button.button == 2:
+      self.code = -3
+    elif button.button == 3:
+      self.code = -2
+    else:
+      self.code = -button.button
     self.response(Gtk.ResponseType.OK)
 
   def self_key_release(self, entry, key):
