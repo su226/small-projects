@@ -276,6 +276,7 @@ class TriggerPressed(Trigger):
     self.deactivate_keys = set()
     self.raw_deactivate_keys = set()
     self.pressed = set()
+    self.handled = set()
 
   def start(self, action_fn, stop_fn):
     super().start(action_fn, stop_fn)
@@ -326,7 +327,8 @@ class TriggerPressed(Trigger):
     if code in self.pressed:
       return
     self.pressed.add(code)
-    if self.raw_activate_keys <= self.pressed:
+    unhandled = self.pressed - self.handled
+    if self.raw_activate_keys <= unhandled:
       # 按下触发一次，按下触发松开停止，触发键触发停止键停止
       if self.mode in (0, 1, 3):
         self.event.set()
@@ -336,13 +338,17 @@ class TriggerPressed(Trigger):
           self.event.clear()
         else:
           self.event.set()
-    elif self.mode == 3 and self.raw_deactivate_keys <= self.pressed:
+      self.handled.update(self.raw_activate_keys)
+    elif self.mode == 3 and self.raw_deactivate_keys <= unhandled:
       self.event.clear()
+      self.handled.update(self.raw_deactivate_keys)
 
   def release(self, code):
     if code not in self.pressed:
       return
     self.pressed.remove(code)
+    if code in self.handled:
+      self.handled.remove(code)
     # 按下触发松开停止
     if self.mode == 1 and not self.raw_activate_keys <= self.pressed:
       self.event.clear()
