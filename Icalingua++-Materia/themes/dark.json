@@ -38,7 +38,8 @@
     "colorName": "#ffffff",
     "colorIcon": "rgba(255, 255, 255, 0.7)",
     "colorDesc": "rgba(255, 255, 255, 0.7)",
-    "colorTimestamp": "rgba(255, 255, 255, 0.7)"
+    "colorTimestamp": "rgba(255, 255, 255, 0.7)",
+    "colorUsername": "#90caf9"
   },
   "header": {
     "background": "#121212",

@@ -17,7 +17,8 @@
     "colorName": "rgba(0, 0, 0, 0.87)",
     "colorIcon": "rgba(0, 0, 0, 0.6)",
     "colorDesc": "rgba(0, 0, 0, 0.6)",
-    "colorTimestamp": "rgba(0, 0, 0, 0.6)"
+    "colorTimestamp": "rgba(0, 0, 0, 0.6)",
+    "colorUsername": "#1976d2"
   },
   "header": {
     "background": "#ffffff"
