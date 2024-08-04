@@ -43,9 +43,12 @@ TIME = time.time()
 TIME_STR = time.strftime("%Y-%m-%d-%H-%M-%S")
 
 logger.info("Logging in source vault.")
-sp.run(["bw", "config", "server", SERVER_SRC, "--raw"], env=ENV_SRC, check=True)
+if sp.run(["bw", "config", "server"], env=ENV_SRC, check=True, stdout=sp.PIPE, text=True).stdout != SERVER_SRC:
+    sp.run(["bw", "logout", "--raw"], env=ENV_SRC, stderr=sp.DEVNULL)
+    sp.run(["bw", "config", "server", SERVER_SRC, "--raw"], env=ENV_SRC, check=True)
+    sp.run(["bw", "login", EMAIL_SRC, "--apikey", "--raw"], env=ENV_SRC, check=True)
 # Exit code for already logged in and login failed are both 1, run `bw login --check` first.
-if sp.run(["bw", "login", "--check", "--raw"], env=ENV_SRC, stderr=sp.DEVNULL).returncode != 0:
+elif sp.run(["bw", "login", "--check", "--raw"], env=ENV_SRC, stderr=sp.DEVNULL).returncode != 0:
     sp.run(["bw", "login", EMAIL_SRC, "--apikey", "--raw"], env=ENV_SRC, check=True)
 
 logger.info("Backing up source vault.")
@@ -61,8 +64,11 @@ os.makedirs("gnupg", 0o700, True)
 sp.run(["gpg", "--homedir", "gnupg", "--symmetric", "--cipher-algo", "AES256", "--batch", "--passphrase", BACKUP_PASSWORD, "--output", f"src_backup/{TIME_STR}.json.gz.gpg"], input=gzip.compress(backup_src.encode()), check=True)
 
 logger.info("Logging in destination vault.")
-sp.run(["bw", "config", "server", SERVER_DST, "--raw"], env=ENV_DST, check=True)
-if sp.run(["bw", "login", "--check", "--raw"], env=ENV_DST, stderr=sp.DEVNULL).returncode != 0:
+if sp.run(["bw", "config", "server"], env=ENV_DST, check=True, stdout=sp.PIPE, text=True).stdout != SERVER_DST:
+    sp.run(["bw", "logout", "--raw"], env=ENV_DST, stderr=sp.DEVNULL)
+    sp.run(["bw", "config", "server", SERVER_DST, "--raw"], env=ENV_DST, check=True)
+    sp.run(["bw", "login", EMAIL_DST, "--apikey", "--raw"], env=ENV_DST, check=True)
+elif sp.run(["bw", "login", "--check", "--raw"], env=ENV_DST, stderr=sp.DEVNULL).returncode != 0:
     sp.run(["bw", "login", EMAIL_DST, "--apikey", "--raw"], env=ENV_DST, check=True)
 
 logger.info("Backing up destination vault.")
@@ -74,24 +80,24 @@ os.makedirs("dst_backup", 0o700, True)
 for file in os.scandir("dst_backup"):
     if file.stat().st_mtime < TIME - BACKUP_TTL:
         os.remove(file.path)
-sp.run(["gpg", "--homedir", "gnupg", "--symmetric", "--cipher-algo", "AES256", "--batch", "--passphrase", BACKUP_PASSWORD, "--output", f"dst_backup/{TIME_STR}.json.gz.enc"], input=gzip.compress(backup_dst.encode()), check=True)
+sp.run(["gpg", "--homedir", "gnupg", "--symmetric", "--cipher-algo", "AES256", "--batch", "--passphrase", BACKUP_PASSWORD, "--output", f"dst_backup/{TIME_STR}.json.gz.gpg"], input=gzip.compress(backup_dst.encode()), check=True)
 
 logger.info("Purging destination vault.")
 with open("dst/data.json") as f:
     data = json.load(f)
-    uuid = data["authenticatedAccounts"][0]
-    profile = data[uuid]["profile"]
-    access_token = data[uuid]["tokens"]["accessToken"]
-match kdf := profile["kdfType"]:
+    uuid = data["global_account_activeAccountId"]
+    kdf_config = data[f"user_{uuid}_kdfConfig_kdfConfig"]
+    access_token = data[f"user_{uuid}_token_accessToken"]
+match kdf := kdf_config["kdfType"]:
     case 0:  # PBKDF2
-        enc_key = hashlib.pbkdf2_hmac("sha256", PASSWORD_DST.encode(), EMAIL_DST.encode(), profile["kdfIterations"])
+        enc_key = hashlib.pbkdf2_hmac("sha256", PASSWORD_DST.encode(), EMAIL_DST.encode(), kdf_config["iterations"])
     case 1:  # Argon2id
         enc_key = argon2.low_level.hash_secret_raw(
             secret=PASSWORD_DST.encode(),
             salt=hashlib.sha256(EMAIL_DST.encode()).digest(),
-            time_cost=profile["kdfIterations"],
-            memory_cost=profile["kdfMemory"] * 1024,
-            parallelism=profile["kdfParallelism"],
+            time_cost=kdf_config["iterations"],
+            memory_cost=kdf_config["memory"] * 1024,
+            parallelism=kdf_config["parallelism"],
             hash_len=32,
             type=argon2.Type.ID,
             version=19
@@ -113,4 +119,4 @@ sp.run(["bw", "sync", "--raw"], env=ENV_DST, check=True)
 with NamedTemporaryFile("w") as f:
     f.write(backup_src)
     f.flush()
-    sp.run(["bw", "import", "bitwardenjson", f.name, "--raw"], env=ENV_DST, check=True, text=True)
+    sp.run(["bw", "import", "bitwardenjson", f.name, "--raw"], env=ENV_DST, check=True)
