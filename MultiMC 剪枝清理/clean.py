@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import ctypes.util
 import json
 import os
@@ -77,7 +78,7 @@ def main() -> None:
         if (meta := instance / "patches" / f"{uid}.json").is_file():
           metadatas.add(meta)
         else:
-          version = component["cachedVersion"]
+          version = component.get("cachedVersion") or component["version"]
           if (meta := Path("meta", uid, f"{version}.json")).is_file():
             metadatas.add(meta)
     if (dir := instance / ".minecraft").is_dir():
