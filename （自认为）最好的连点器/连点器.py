@@ -1,18 +1,20 @@
 #!/usr/bin/python3
-from pykeyboard import PyKeyboard, PyKeyboardEvent
-from pymouse import PyMouse, PyMouseEvent
 import ctypes
-import gi
 import json
-import sys
 import threading
 import time
 import traceback
-gi.require_version("Gtk", "3.0")
-from gi.repository import GLib, Gtk, Gdk
 
-KEYBOARD = PyKeyboard()
-MOUSE = PyMouse()
+import gi
+import pynput
+
+gi.require_version("Gdk", "3.0")
+gi.require_version("GLib", "2.0")
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gdk, GLib, Gtk
+
+KEYBOARD = pynput.keyboard.Controller()
+MOUSE = pynput.mouse.Controller()
 DISPLAY = Gdk.Display.get_default()
 KEYMAP = Gdk.Keymap.get_for_display(DISPLAY)
 CLIPBOARD = Gtk.Clipboard.get_default(DISPLAY)
@@ -30,11 +32,6 @@ def get_key_name(key):
   if key < 0:
     return f"Mouse{-key}"
   return Gdk.keyval_name(key)
-
-def get_raw_code(key):
-  if key < 0:
-    return key
-  return KEYMAP.get_entries_for_keyval(key).keys[0].keycode
 
 def get_screen_size():
   n = DISPLAY.get_n_monitors()
@@ -67,12 +64,7 @@ class KeyDialog(Gtk.MessageDialog):
       button.show()    
 
   def self_button_release(self, entry, button):
-    if button.button == 2:
-      self.code = -3
-    elif button.button == 3:
-      self.code = -2
-    else:
-      self.code = -button.button
+    self.code = -button.button
     self.response(Gtk.ResponseType.OK)
 
   def self_key_release(self, entry, key):
@@ -205,26 +197,23 @@ class TriggerPressed(Trigger):
     def add_activate_key(self, button):
       dialog = KeyDialog(buttons=Gtk.ButtonsType.CANCEL)
       if dialog.run() == Gtk.ResponseType.OK:
-        self.add_key(self.activate_box, self.trigger.activate_keys, self.trigger.raw_activate_keys, dialog.code)
+        self.add_key(self.activate_box, self.trigger.activate_keys, dialog.code)
       dialog.destroy()
       
     def add_deactivate_key(self, button):
       dialog = KeyDialog(buttons=Gtk.ButtonsType.CANCEL)
       if dialog.run() == Gtk.ResponseType.OK:
-        self.add_key(self.deactivate_box, self.trigger.deactivate_keys, self.trigger.raw_deactivate_keys, dialog.code)
+        self.add_key(self.deactivate_box, self.trigger.deactivate_keys, dialog.code)
       dialog.destroy()
 
-    def add_key(self, wrap, keys, raw_keys, code, force=False):
+    def add_key(self, wrap, keys, code, force=False):
       def delete(button):
         keys.remove(code)
-        raw_keys.remove(raw_code)
         child.destroy()
 
       if code in keys and not force:
         return
-      raw_code = get_raw_code(code)
       keys.add(code)
-      raw_keys.add(raw_code)
 
       child = Gtk.FlowBoxChild()
       wrap.add(child)
@@ -241,32 +230,10 @@ class TriggerPressed(Trigger):
       self.mode_combo.set_active(self.trigger.mode)
       self.activate_box.foreach(Gtk.Widget.destroy)
       for i in self.trigger.activate_keys:
-        self.add_key(self.activate_box, self.trigger.activate_keys, self.trigger.raw_activate_keys, i, True)
+        self.add_key(self.activate_box, self.trigger.activate_keys, i, True)
       self.deactivate_box.foreach(Gtk.Widget.destroy)
       for i in self.trigger.deactivate_keys:
-        self.add_key(self.deactivate_box, self.trigger.deactivate_keys, self.trigger.raw_deactivate_keys, i, True)
-
-  class KeyboardListener(PyKeyboardEvent):
-    def __init__(self, trigger):
-      super().__init__()
-      self.trigger = trigger
-
-    def tap(self, code, char, press):
-      if press:
-        self.trigger.press(code)
-      else:
-        self.trigger.release(code)
-  
-  class MouseListener(PyMouseEvent):
-    def __init__(self, trigger):
-      super().__init__()
-      self.trigger = trigger
-
-    def click(self, x, y, button, press):
-      if press:
-        self.trigger.press(-button)
-      else:
-        self.trigger.release(-button)
+        self.add_key(self.deactivate_box, self.trigger.deactivate_keys, i, True)
 
   ID = "pressed"
   NAME = "按键触发"
@@ -277,9 +244,7 @@ class TriggerPressed(Trigger):
     self.thread3 = None
     self.mode = 0
     self.activate_keys = set()
-    self.raw_activate_keys = set()
     self.deactivate_keys = set()
-    self.raw_deactivate_keys = set()
     self.pressed = set()
     self.handled = set()
 
@@ -306,9 +271,9 @@ class TriggerPressed(Trigger):
     self.event = threading.Event()
     self.thread = threading.Thread(target=self.run, daemon=True)
     self.thread.start()
-    self.thread2 = self.KeyboardListener(self)
+    self.thread2 = pynput.keyboard.Listener(self.on_keyboard_press, self.on_keyboard_release)
     self.thread2.start()
-    self.thread3 = self.MouseListener(self)
+    self.thread3 = pynput.mouse.Listener(on_click=self.on_mouse_click)
     self.thread3.start()
   
   def stop(self):
@@ -328,12 +293,30 @@ class TriggerPressed(Trigger):
     self.activate_keys = set(data["activate_keys"])
     self.deactivate_keys = set(data["deactivate_keys"])
 
+  def on_keyboard_press(self, key):
+    if isinstance(key, pynput.keyboard.Key):
+      self.press(key.value)
+    else:
+      self.press(key.vk)
+
+  def on_keyboard_release(self, key):
+    if isinstance(key, pynput.keyboard.Key):
+      self.release(key.value)
+    else:
+      self.release(key.vk)
+
+  def on_mouse_click(self, x, y, button, pressed):
+    if pressed:
+      self.press(-button.value)
+    else:
+      self.release(-button.value)
+
   def press(self, code):
     if code in self.pressed:
       return
     self.pressed.add(code)
     unhandled = self.pressed - self.handled
-    if self.raw_activate_keys <= unhandled:
+    if self.activate_keys <= unhandled:
       # 按下触发一次，按下触发松开停止，触发键触发停止键停止
       if self.mode in (0, 1, 3):
         self.event.set()
@@ -343,10 +326,10 @@ class TriggerPressed(Trigger):
           self.event.clear()
         else:
           self.event.set()
-      self.handled.update(self.raw_activate_keys)
-    elif self.mode == 3 and self.raw_deactivate_keys <= unhandled:
+      self.handled.update(self.activate_keys)
+    elif self.mode == 3 and self.deactivate_keys <= unhandled:
       self.event.clear()
-      self.handled.update(self.raw_deactivate_keys)
+      self.handled.update(self.deactivate_keys)
 
   def release(self, code):
     if code not in self.pressed:
@@ -355,7 +338,7 @@ class TriggerPressed(Trigger):
     if code in self.handled:
       self.handled.remove(code)
     # 按下触发松开停止
-    if self.mode == 1 and not self.raw_activate_keys <= self.pressed:
+    if self.mode == 1 and not self.activate_keys <= self.pressed:
       self.event.clear()
 
   def run(self):
@@ -485,14 +468,11 @@ class ActionKeyTap(Action):
     def add_key(self, code, force=False):
       def delete(button):
         self.trigger.keys.remove(code)
-        self.trigger.raw_keys.remove(raw_code)
         child.destroy()
 
       if code in self.trigger.keys and not force:
         return
-      raw_code = get_raw_code(code)
       self.trigger.keys.add(code)
-      self.trigger.raw_keys.add(raw_code)
 
       child = Gtk.FlowBoxChild()
       self.keys_box.add(child)
@@ -542,7 +522,6 @@ class ActionKeyTap(Action):
     self.duration = 0
     self.delay = 0
     self.keys = set()
-    self.raw_keys = set()
 
   def exec(self):
     if self.mode == 0:
@@ -558,12 +537,12 @@ class ActionKeyTap(Action):
       self.release()
 
   def press(self):
-    for j in self.raw_keys:
-      KEYBOARD.press_key(j)
+    for j in self.keys:
+      KEYBOARD.press(pynput.keyboard.KeyCode(j))
 
   def release(self):
-    for j in self.raw_keys:
-      KEYBOARD.release_key(j)
+    for j in self.keys:
+      KEYBOARD.release(pynput.keyboard.KeyCode(j))
   
   def serialize(self):
     return {
@@ -745,17 +724,13 @@ class ActionMouseTap(Action):
 
   def press(self):
     if self.position_lock:
-      x, y = self.position_x, self.position_y
-    else:
-      x, y = MOUSE.position()
-    MOUSE.press(x, y, self.button)
+      MOUSE.position = (self.position_x, self.position_y)
+    MOUSE.press(pynput.mouse.Button(self.button))
 
   def release(self):
     if self.position_lock:
-      x, y = self.position_x, self.position_y
-    else:
-      x, y = MOUSE.position()
-    MOUSE.release(x, y, self.button)
+      MOUSE.position = (self.position_x, self.position_y)
+    MOUSE.release(pynput.mouse.Button(self.button))
 
   def serialize(self):
     return {
@@ -870,7 +845,8 @@ class ActionType(Action):
     self.interval = 0
 
   def exec(self):
-    KEYBOARD.type_string(self.text, self.interval)
+    # TODO: interval?
+    KEYBOARD.type(self.text)
 
   def serialize(self):
     return {
@@ -1140,7 +1116,7 @@ class MainWindow(Gtk.Window):
     for i in self.actions:
       try:
         i.exec()
-      except:
+      except Exception:
         traceback.print_exc()
 
   def trigger_stop(self):
