@@ -4,23 +4,32 @@ import json
 import threading
 import time
 import traceback
+from typing import Any, Callable, ClassVar, Literal, Protocol, cast
 
+import cairo
 import gi
 import pynput
 
 gi.require_version("Gdk", "3.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gdk, GLib, Gtk
+from gi.repository import Gdk, GLib, Gtk  # noqa: E402 # type: ignore
+
+KeyDialogMode = Literal[0, 1, 2]
+TriggerPressedMode = Literal[0, 1, 2, 3]
 
 KEYBOARD = pynput.keyboard.Controller()
 MOUSE = pynput.mouse.Controller()
-DISPLAY = Gdk.Display.get_default()
+_DISPLAY = Gdk.Display.get_default()
+if not _DISPLAY:
+  raise RuntimeError("No display.")
+DISPLAY = _DISPLAY
+del _DISPLAY
 KEYMAP = Gdk.Keymap.get_for_display(DISPLAY)
 CLIPBOARD = Gtk.Clipboard.get_default(DISPLAY)
 
-def kill_thread(thread):
-  if not thread or not thread.ident:
+def kill_thread(thread: threading.Thread) -> None:
+  if not thread.ident:
     return
   tid = ctypes.c_long(thread.ident)
   ret = ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, ctypes.py_object(SystemExit))
@@ -28,16 +37,22 @@ def kill_thread(thread):
     ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, 0)
     raise SystemError("Failed to kill thread.")
   
-def get_key_name(key):
+def get_key_name(key: int) -> str:
   if key < 0:
     return f"Mouse{-key}"
-  return Gdk.keyval_name(key)
+  name = Gdk.keyval_name(key)
+  if not name:
+    raise RuntimeError(f"Failed to get name of key {key}.")
+  return name
 
-def get_screen_size():
+def get_screen_size() -> tuple[int, int]:
   n = DISPLAY.get_n_monitors()
   width = height = 0
   for i in range(n):
-    geometry = DISPLAY.get_monitor(i).get_geometry()
+    monitor = DISPLAY.get_monitor(i)
+    if not monitor:
+      raise RuntimeError(f"Failed to get monitor {i}.")
+    geometry = monitor.get_geometry()
     width = max(width, geometry.x + geometry.width)
     height = max(height, geometry.y + geometry.height)
   return width, height
@@ -49,10 +64,10 @@ class KeyDialog(Gtk.MessageDialog):
     "请按下键盘"
   ]
 
-  def __init__(self, mode=0, **kw):
+  def __init__(self, mode: KeyDialogMode = 0, **kw: Any) -> None:
     super().__init__(text=self.TEXTS[mode], **kw)
     self.mode = mode
-    self.code = None
+    self.code: int | None = None
 
     if mode != 1:
       self.connect("key-release-event", self.self_key_release)
@@ -60,21 +75,21 @@ class KeyDialog(Gtk.MessageDialog):
     if mode != 2:
       button = Gtk.Button(label="点击此处")
       button.connect("button-release-event", self.self_button_release)
-      self.get_message_area().pack_start(button, False, True, 0)
+      cast(Gtk.Box, self.get_message_area()).pack_start(button, False, True, 0)
       button.show()    
 
-  def self_button_release(self, entry, button):
+  def self_button_release(self, widget: Gtk.Widget, button: Gdk.EventButton) -> None:
     self.code = -button.button
     self.response(Gtk.ResponseType.OK)
 
-  def self_key_release(self, entry, key):
+  def self_key_release(self, widget: Gtk.Widget, key: Gdk.EventKey) -> None:
     self.code = key.keyval
     self.response(Gtk.ResponseType.OK)
 
 class LocateDialog(Gtk.Dialog):
   TEXT = "选择一个位置，ESC取消"
 
-  def __init__(self):
+  def __init__(self) -> None:
     super().__init__()
     self.x = 0
     self.y = 0
@@ -87,7 +102,7 @@ class LocateDialog(Gtk.Dialog):
     self.connect("motion-notify-event", self.self_motion)
     self.connect("button-release-event", self.self_button_release)
 
-  def self_draw(self, window, cr):
+  def self_draw(self, window: Gtk.Window, cr: "cairo.Context[cairo.ImageSurface]") -> None:
     cr.set_source_rgb(0.129411765, 0.588235294, 0.952941176) # 2196f3
     cr.move_to(0, self.y)
     cr.line_to(self.w, self.y)
@@ -102,35 +117,39 @@ class LocateDialog(Gtk.Dialog):
 
     self.queue_draw()
 
-  def self_motion(self, window, event):
+  def self_motion(self, window: Gtk.Window, event: Gdk.EventMotion) -> None:
     self.x = event.x
     self.y = event.y
 
-  def self_button_release(self, window, event):
+  def self_button_release(self, window: Gtk.Window, event: Gdk.EventButton) -> None:
     self.response(Gtk.ResponseType.OK)
 
 class Trigger:
-  def __init__(self):
-    self.thread = None
+  ID: ClassVar[str]
+  NAME: ClassVar[str]
 
-  def start(self, action_fn, stop_fn):
+  def __init__(self) -> None:
+    self.thread: threading.Thread | None = None
+
+  def start(self, action_fn: Callable[[], None], stop_fn: Callable[[], None] | None) -> None:
     self.action_fn = action_fn
     self.stop_fn = stop_fn
 
-  def stop(self):
-    kill_thread(self.thread)
+  def stop(self) -> None:
+    if self.thread:
+      kill_thread(self.thread)
     if self.stop_fn:
       self.stop_fn()
 
-  def serialize(self):
+  def serialize(self) -> Any:
     return {}
 
-  def deserialize(self, data):
+  def deserialize(self, data: Any) -> None:
     pass
 
 class TriggerPressed(Trigger):
   class ConfigWidget(Gtk.Box):
-    def __init__(self, trigger):
+    def __init__(self, trigger: "TriggerPressed") -> None:
       super().__init__(orientation=Gtk.Orientation.VERTICAL)
       self.trigger = trigger
 
@@ -190,24 +209,24 @@ class TriggerPressed(Trigger):
       self.deactivate_wrap.pack_start(self.deactivate_box, False, True, 0)
       self.deactivate_box.show()
 
-    def mode_changed(self, combo):
-      self.trigger.mode = combo.get_active()
+    def mode_changed(self, combo: Gtk.ComboBoxText) -> None:
+      self.trigger.mode = cast(TriggerPressedMode, combo.get_active())
       self.deactivate_wrap.set_visible(self.trigger.mode == 3)
 
-    def add_activate_key(self, button):
+    def add_activate_key(self, button: Gtk.Button) -> None:
       dialog = KeyDialog(buttons=Gtk.ButtonsType.CANCEL)
-      if dialog.run() == Gtk.ResponseType.OK:
+      if dialog.run() == Gtk.ResponseType.OK and dialog.code is not None:
         self.add_key(self.activate_box, self.trigger.activate_keys, dialog.code)
       dialog.destroy()
       
-    def add_deactivate_key(self, button):
+    def add_deactivate_key(self, button: Gtk.Button) -> None:
       dialog = KeyDialog(buttons=Gtk.ButtonsType.CANCEL)
-      if dialog.run() == Gtk.ResponseType.OK:
+      if dialog.run() == Gtk.ResponseType.OK and dialog.code is not None:
         self.add_key(self.deactivate_box, self.trigger.deactivate_keys, dialog.code)
       dialog.destroy()
 
-    def add_key(self, wrap, keys, code, force=False):
-      def delete(button):
+    def add_key(self, wrap: Gtk.Container, keys: set[int], code: int, force: bool = False) -> None:
+      def delete(button: Gtk.Button) -> None:
         keys.remove(code)
         child.destroy()
 
@@ -226,7 +245,7 @@ class TriggerPressed(Trigger):
       child.add(button)
       button.show()
 
-    def update(self):
+    def update(self) -> None:
       self.mode_combo.set_active(self.trigger.mode)
       self.activate_box.foreach(Gtk.Widget.destroy)
       for i in self.trigger.activate_keys:
@@ -238,17 +257,17 @@ class TriggerPressed(Trigger):
   ID = "pressed"
   NAME = "按键触发"
 
-  def __init__(self):
+  def __init__(self) -> None:
     super().__init__()
-    self.thread2 = None
-    self.thread3 = None
-    self.mode = 0
-    self.activate_keys = set()
-    self.deactivate_keys = set()
-    self.pressed = set()
-    self.handled = set()
+    self.thread2: threading.Thread | None = None
+    self.thread3: threading.Thread | None = None
+    self.mode: TriggerPressedMode = 0
+    self.activate_keys = set[int]()
+    self.deactivate_keys = set[int]()
+    self.pressed = set[int]()
+    self.handled = set[int]()
 
-  def start(self, action_fn, stop_fn):
+  def start(self, action_fn: Callable[[], None], stop_fn: Callable[[], None] | None) -> None:
     super().start(action_fn, stop_fn)
     if len(self.activate_keys) == 0:
       dialog = Gtk.MessageDialog(
@@ -276,42 +295,44 @@ class TriggerPressed(Trigger):
     self.thread3 = pynput.mouse.Listener(on_click=self.on_mouse_click)
     self.thread3.start()
   
-  def stop(self):
-    kill_thread(self.thread2)
-    kill_thread(self.thread3)
+  def stop(self) -> None:
+    if self.thread2:
+      kill_thread(self.thread2)
+    if self.thread3:
+      kill_thread(self.thread3)
     super().stop()
 
-  def serialize(self):
+  def serialize(self) -> Any:
     return {
       "mode": self.mode,
       "activate_keys": tuple(self.activate_keys),
       "deactivate_keys": tuple(self.deactivate_keys)
     }
 
-  def deserialize(self, data):
+  def deserialize(self, data: Any) -> None:
     self.mode = data["mode"]
     self.activate_keys = set(data["activate_keys"])
     self.deactivate_keys = set(data["deactivate_keys"])
 
-  def on_keyboard_press(self, key):
+  def on_keyboard_press(self, key: pynput.keyboard.Key | pynput.keyboard.KeyCode | None) -> None:
     if isinstance(key, pynput.keyboard.Key):
       self.press(key.value)
-    else:
+    elif key and key.vk is not None:
       self.press(key.vk)
 
-  def on_keyboard_release(self, key):
+  def on_keyboard_release(self, key: pynput.keyboard.Key | pynput.keyboard.KeyCode | None) -> None:
     if isinstance(key, pynput.keyboard.Key):
       self.release(key.value)
-    else:
+    elif key and key.vk is not None:
       self.release(key.vk)
 
-  def on_mouse_click(self, x, y, button, pressed):
+  def on_mouse_click(self, x: int, y: int, button: pynput.mouse.Button, pressed: bool) -> None:
     if pressed:
       self.press(-button.value)
     else:
       self.release(-button.value)
 
-  def press(self, code):
+  def press(self, code: int) -> None:
     if code in self.pressed:
       return
     self.pressed.add(code)
@@ -331,7 +352,7 @@ class TriggerPressed(Trigger):
       self.event.clear()
       self.handled.update(self.deactivate_keys)
 
-  def release(self, code):
+  def release(self, code: int) -> None:
     if code not in self.pressed:
       return
     self.pressed.remove(code)
@@ -341,28 +362,36 @@ class TriggerPressed(Trigger):
     if self.mode == 1 and not self.activate_keys <= self.pressed:
       self.event.clear()
 
-  def run(self):
+  def run(self) -> None:
     while True:
       self.event.wait()
       self.action_fn()
       if self.mode == 0:
         self.event.clear()
 
-class Action:
-  def exec(self):
+
+class Action():
+  ID: str
+  NAME: str
+
+  class ConfigWidget(Protocol):
+    def __init__(self, action: Any) -> None: ...
+    def update(self) -> None: ...
+
+  def exec(self) -> None:
     pass
 
-  def serialize(self):
+  def serialize(self) -> Any:
     return {}
 
-  def deserialize(self, data):
+  def deserialize(self, data: Any) -> None:
     pass
 
 class ActionSleep(Action):
   class ConfigWidget(Gtk.Box):
-    def __init__(self, trigger):
+    def __init__(self, action: "ActionSleep") -> None:
       super().__init__()
-      self.trigger = trigger
+      self.action = action
 
       label = Gtk.Label(label="延时")
       self.pack_start(label, False, False, 0)
@@ -373,32 +402,32 @@ class ActionSleep(Action):
       self.pack_start(self.delay_spin, True, True, 0)
       self.delay_spin.show()
 
-    def changed(self, spin):
-      self.trigger.delay = spin.get_value()
+    def changed(self, spin: Gtk.SpinButton) -> None:
+      self.action.delay = spin.get_value()
 
-    def update(self):
-      self.delay_spin.set_value(self.trigger.delay)
+    def update(self) -> None:
+      self.delay_spin.set_value(self.action.delay)
 
   ID = "sleep"
   NAME = "延时"
 
-  def __init__(self):
-    self.delay = 0
+  def __init__(self) -> None:
+    self.delay: float = 0
 
-  def exec(self):
+  def exec(self) -> None:
     time.sleep(self.delay)
 
-  def serialize(self):
+  def serialize(self) -> Any:
     return self.delay
 
-  def deserialize(self, data):
+  def deserialize(self, data: Any) -> None:
     self.delay = data
 
 class ActionKeyTap(Action):
   class ConfigWidget(Gtk.Box):
-    def __init__(self, trigger):
+    def __init__(self, action: "ActionKeyTap") -> None:
       super().__init__(orientation=Gtk.Orientation.VERTICAL)
-      self.trigger = trigger
+      self.action = action
 
       hbox = Gtk.Box()
       self.pack_start(hbox, False, True, 0)
@@ -465,14 +494,14 @@ class ActionKeyTap(Action):
       self.pack_start(self.keys_box, False, True, 0)
       self.keys_box.show()
 
-    def add_key(self, code, force=False):
-      def delete(button):
-        self.trigger.keys.remove(code)
+    def add_key(self, code: int, force: bool = False) -> None:
+      def delete(button: Gtk.Button) -> None:
+        self.action.keys.remove(code)
         child.destroy()
 
-      if code in self.trigger.keys and not force:
+      if code in self.action.keys and not force:
         return
-      self.trigger.keys.add(code)
+      self.action.keys.add(code)
 
       child = Gtk.FlowBoxChild()
       self.keys_box.add(child)
@@ -485,45 +514,45 @@ class ActionKeyTap(Action):
       child.add(button)
       button.show()
 
-    def mode_changed(self, combo):
-      self.trigger.mode = combo.get_active()
-      self.click_box.set_visible(self.trigger.mode == 0)
+    def mode_changed(self, combo: Gtk.ComboBoxText) -> None:
+      self.action.mode = combo.get_active()
+      self.click_box.set_visible(self.action.mode == 0)
 
-    def times_changed(self, spin):
-      self.trigger.times = int(spin.get_value())
+    def times_changed(self, spin: Gtk.SpinButton) -> None:
+      self.action.times = int(spin.get_value())
 
-    def duration_changed(self, spin):
-      self.trigger.duration = spin.get_value()
+    def duration_changed(self, spin: Gtk.SpinButton) -> None:
+      self.action.duration = spin.get_value()
 
-    def delay_changed(self, spin):
-      self.trigger.delay = spin.get_value()
+    def delay_changed(self, spin: Gtk.SpinButton) -> None:
+      self.action.delay = spin.get_value()
 
-    def add_clicked(self, button):
+    def add_clicked(self, button: Gtk.Button) -> None:
       dialog = KeyDialog(mode=2, buttons=Gtk.ButtonsType.CANCEL)
-      if dialog.run() == Gtk.ResponseType.OK:
+      if dialog.run() == Gtk.ResponseType.OK and dialog.code is not None:
         self.add_key(dialog.code)
       dialog.destroy()
 
-    def update(self):
-      self.mode_combo.set_active(self.trigger.mode)
-      self.times_spin.set_value(self.trigger.times)
-      self.duration_spin.set_value(self.trigger.duration)
-      self.delay_spin.set_value(self.trigger.delay)
+    def update(self) -> None:
+      self.mode_combo.set_active(self.action.mode)
+      self.times_spin.set_value(self.action.times)
+      self.duration_spin.set_value(self.action.duration)
+      self.delay_spin.set_value(self.action.delay)
       self.keys_box.foreach(Gtk.Widget.destroy)
-      for i in self.trigger.keys:
+      for i in self.action.keys:
         self.add_key(i, True)
 
   ID = "key_tap"
   NAME = "点击键盘"
 
-  def __init__(self):
+  def __init__(self) -> None:
     self.mode = 0
     self.times = 1
     self.duration = 0
     self.delay = 0
-    self.keys = set()
+    self.keys = set[int]()
 
-  def exec(self):
+  def exec(self) -> None:
     if self.mode == 0:
       for i in range(self.times):
         if i != 0:
@@ -536,15 +565,15 @@ class ActionKeyTap(Action):
     else:
       self.release()
 
-  def press(self):
+  def press(self) -> None:
     for j in self.keys:
-      KEYBOARD.press(pynput.keyboard.KeyCode(j))
+      KEYBOARD.press(pynput.keyboard.KeyCode(cast(Any, j)))
 
-  def release(self):
+  def release(self) -> None:
     for j in self.keys:
-      KEYBOARD.release(pynput.keyboard.KeyCode(j))
+      KEYBOARD.release(pynput.keyboard.KeyCode(cast(Any, j)))
   
-  def serialize(self):
+  def serialize(self) -> Any:
     return {
       "mode": self.mode,
       "times": self.times,
@@ -553,18 +582,18 @@ class ActionKeyTap(Action):
       "keys": tuple(self.keys)
     }
 
-  def deserialize(self, data):
+  def deserialize(self, data: Any) -> None:
     self.mode = data["mode"]
     self.times = data["times"]
     self.duration = data["duration"]
     self.delay = data["delay"]
-    self.keys = set(data["keys"])
+    self.keys = set[int](data["keys"])
 
 class ActionMouseTap(Action):
   class ConfigWidget(Gtk.Box):
-    def __init__(self, trigger):
+    def __init__(self, action: "ActionMouseTap") -> None:
       super().__init__(orientation=Gtk.Orientation.VERTICAL)
-      self.trigger = trigger
+      self.action = action
 
       hbox = Gtk.Box()
       self.pack_start(hbox, False, True, 0)
@@ -652,54 +681,54 @@ class ActionMouseTap(Action):
       self.position_box.pack_start(button, False, False, 0)
       button.show()
 
-    def mode_changed(self, combo):
-      self.trigger.mode = combo.get_active()
-      self.click_box.set_visible(self.trigger.mode == 0)
+    def mode_changed(self, combo: Gtk.ComboBoxText) -> None:
+      self.action.mode = combo.get_active()
+      self.click_box.set_visible(self.action.mode == 0)
 
-    def times_changed(self, spin):
-      self.trigger.times = spin.get_value_as_int()
+    def times_changed(self, spin: Gtk.SpinButton) -> None:
+      self.action.times = spin.get_value_as_int()
 
-    def duration_changed(self, spin):
-      self.trigger.duration = spin.get_value()
+    def duration_changed(self, spin: Gtk.SpinButton) -> None:
+      self.action.duration = spin.get_value()
 
-    def delay_changed(self, spin):
-      self.trigger.delay = spin.get_value()
+    def delay_changed(self, spin: Gtk.SpinButton) -> None:
+      self.action.delay = spin.get_value()
 
-    def pos_toggled(self, check):
-      self.trigger.position_lock = check.get_active()
-      self.position_box.set_visible(self.trigger.position_lock)
+    def pos_toggled(self, check: Gtk.CheckButton) -> None:
+      self.action.position_lock = check.get_active()
+      self.position_box.set_visible(self.action.position_lock)
     
-    def x_changed(self, spin):
-      self.trigger.position_x = spin.get_value_as_int()
+    def x_changed(self, spin: Gtk.SpinButton) -> None:
+      self.action.position_x = spin.get_value_as_int()
     
-    def y_changed(self, spin):
-      self.trigger.position_y = spin.get_value_as_int()
+    def y_changed(self, spin: Gtk.SpinButton) -> None:
+      self.action.position_y = spin.get_value_as_int()
 
-    def locate_clicked(self, button):
+    def locate_clicked(self, button: Gtk.Button) -> None:
       dialog = LocateDialog()
       if dialog.run() == Gtk.ResponseType.OK:
         self.x_spin.set_value(dialog.x)
         self.y_spin.set_value(dialog.y)
       dialog.destroy()
 
-    def change_clicked(self, button):
+    def change_clicked(self, button: Gtk.Button) -> None:
       dialog = KeyDialog(1, buttons=Gtk.ButtonsType.CANCEL)
-      if dialog.run() == Gtk.ResponseType.OK:
-        self.trigger.button = -dialog.code
+      if dialog.run() == Gtk.ResponseType.OK and dialog.code is not None:
+        self.action.button = -dialog.code
         button.set_label(get_key_name(dialog.code))
       dialog.destroy()
 
-    def update(self):
-      self.mode_combo.set_active(self.trigger.mode)
-      self.times_spin.set_value(self.trigger.times)
-      self.duration_spin.set_value(self.trigger.duration)
-      self.delay_spin.set_value(self.trigger.delay)
-      self.change_button.set_label(get_key_name(-self.trigger.button))
-      self.pos_check.set_active(self.trigger.position_lock)
-      self.x_spin.set_value(self.trigger.position_x)
-      self.y_spin.set_value(self.trigger.position_y)
+    def update(self) -> None:
+      self.mode_combo.set_active(self.action.mode)
+      self.times_spin.set_value(self.action.times)
+      self.duration_spin.set_value(self.action.duration)
+      self.delay_spin.set_value(self.action.delay)
+      self.change_button.set_label(get_key_name(-self.action.button))
+      self.pos_check.set_active(self.action.position_lock)
+      self.x_spin.set_value(self.action.position_x)
+      self.y_spin.set_value(self.action.position_y)
 
-  def __init__(self):
+  def __init__(self) -> None:
     self.mode = 0
     self.times = 1
     self.duration = 0
@@ -709,7 +738,7 @@ class ActionMouseTap(Action):
     self.position_x = 0
     self.position_y = 0
   
-  def exec(self):
+  def exec(self) -> None:
     if self.mode == 0:
       for i in range(self.times):
         if i != 0:
@@ -722,17 +751,17 @@ class ActionMouseTap(Action):
     else:
       self.release()
 
-  def press(self):
+  def press(self) -> None:
     if self.position_lock:
       MOUSE.position = (self.position_x, self.position_y)
     MOUSE.press(pynput.mouse.Button(self.button))
 
-  def release(self):
+  def release(self) -> None:
     if self.position_lock:
       MOUSE.position = (self.position_x, self.position_y)
     MOUSE.release(pynput.mouse.Button(self.button))
 
-  def serialize(self):
+  def serialize(self) -> Any:
     return {
       "mode": self.mode,
       "times": self.times,
@@ -742,7 +771,7 @@ class ActionMouseTap(Action):
       "position": [self.position_lock, self.position_x, self.position_y]
     }
 
-  def deserialize(self, data):
+  def deserialize(self, data: Any) -> None:
     self.mode = data["mode"]
     self.times = data["times"]
     self.duration = data["duration"]
@@ -755,9 +784,9 @@ class ActionMouseTap(Action):
 
 class ActionCopy(Action):
   class ConfigWidget(Gtk.Box):
-    def __init__(self, trigger):
+    def __init__(self, action: "ActionCopy") -> None:
       super().__init__(orientation=Gtk.Orientation.VERTICAL)
-      self.trigger = trigger
+      self.action = action
 
       label = Gtk.Label(label="内容")
       self.pack_start(label, False, True, 0)
@@ -770,36 +799,36 @@ class ActionCopy(Action):
       self.buffer = textview.get_buffer()
       self.buffer.connect("changed", self.buffer_changed)
 
-    def update(self):
-      self.buffer.set_text(self.trigger.text)
+    def update(self) -> None:
+      self.buffer.set_text(self.action.text)
     
-    def buffer_changed(self, entry):
-      self.trigger.text = self.buffer.get_text(self.buffer.get_start_iter(), self.buffer.get_end_iter(), False)
+    def buffer_changed(self, entry: Gtk.Entry) -> None:
+      self.action.text = self.buffer.get_text(self.buffer.get_start_iter(), self.buffer.get_end_iter(), False)
 
   ID = "copy"
   NAME = "复制"
 
-  def __init__(self):
+  def __init__(self) -> None:
     self.text = ""
 
-  def exec(self):
+  def exec(self) -> None:
     GLib.idle_add(self.do_exec)
 
-  def do_exec(self):
+  def do_exec(self) -> None:
     CLIPBOARD.set_text(self.text, -1)
     CLIPBOARD.store()
 
-  def serialize(self):
+  def serialize(self) -> Any:
     return self.text
 
-  def deserialize(self, data):
+  def deserialize(self, data: Any) -> None:
     self.text = data
 
 class ActionType(Action):
   class ConfigWidget(Gtk.Box):
-    def __init__(self, trigger):
+    def __init__(self, action: "ActionType") -> None:
       super().__init__(orientation=Gtk.Orientation.VERTICAL)
-      self.trigger = trigger
+      self.action = action
 
       hbox = Gtk.Box()
       self.pack_start(hbox, False, True, 0)
@@ -827,34 +856,34 @@ class ActionType(Action):
       hbox.pack_start(self.entry, True, True, 0)
       self.entry.show()
 
-    def update(self):
-      self.interval_spin.set_value(self.trigger.interval)
-      self.entry.set_text(self.trigger.text)
+    def update(self) -> None:
+      self.interval_spin.set_value(self.action.interval)
+      self.entry.set_text(self.action.text)
 
-    def interval_changed(self, spin):
-      self.trigger.interval = spin.get_value()
+    def interval_changed(self, spin: Gtk.SpinButton) -> None:
+      self.action.interval = spin.get_value()
     
-    def entry_changed(self, entry):
-      self.trigger.text = entry.get_text()
+    def entry_changed(self, entry: Gtk.Entry) -> None:
+      self.action.text = entry.get_text()
 
   ID = "type"
   NAME = "输入文本（仅限英文）"
 
-  def __init__(self):
+  def __init__(self) -> None:
     self.text = ""
     self.interval = 0
 
-  def exec(self):
+  def exec(self) -> None:
     # TODO: interval?
     KEYBOARD.type(self.text)
 
-  def serialize(self):
+  def serialize(self) -> Any:
     return {
       "text": self.text,
       "interval": self.interval
     }
 
-  def deserialize(self, data):
+  def deserialize(self, data: Any) -> None:
     self.text = data["text"]
     self.interval = data["interval"]
 
@@ -875,7 +904,7 @@ ACTIONS = { i.ID: i for i in [
 ACTIONS_INDEX = { k: i for i, k in enumerate(ACTIONS) }
 
 class MainWindow(Gtk.Window):
-  def __init__(self):
+  def __init__(self) -> None:
     super().__init__(title="连点器")
     self.set_default_size(800, 600)
 
@@ -958,38 +987,38 @@ class MainWindow(Gtk.Window):
     hbox.pack_start(self.toggle_button, True, True, 0)
     self.toggle_button.show()
 
-    self.actions = []
+    self.actions = list[Action]()
     self.running = False
 
-  def add_action(self, index):
-    def up(button):
+  def add_action(self, index: int) -> tuple[Action, Gtk.Widget]:
+    def up(button: Gtk.Button) -> None:
       pos = self.actions.index(action)
       if pos > 0:
         self.actions[pos], self.actions[pos - 1] = self.actions[pos - 1], self.actions[pos]
         pos -= 1
         self.action_box.reorder_child(box, pos)
 
-    def down(button):
+    def down(button: Gtk.Button) -> None:
       pos = self.actions.index(action)
       if pos < len(self.actions) - 1:
         self.actions[pos], self.actions[pos + 1] = self.actions[pos + 1], self.actions[pos]
         pos += 1
         self.action_box.reorder_child(box, pos)
 
-    def delete(button):
+    def delete(button: Gtk.Button) -> None:
       self.actions.remove(action)
       box.destroy()
 
-    def change(combo):
+    def change(combo: Gtk.ComboBoxText) -> None:
       nonlocal action
       new_action = ACTIONS[store[combo.get_active()][0]]()
       if action is not None:
-        config_wrap.get_child().destroy()
+        cast(Gtk.Widget, config_wrap.get_child()).destroy()
         self.actions[self.actions.index(action)] = new_action
       else:
         self.actions.append(new_action)
       action = new_action
-      widget = action.ConfigWidget(action)
+      widget = action.ConfigWidget(cast(Any, action))
       config_wrap.add(widget)
       widget.show()
 
@@ -1039,12 +1068,12 @@ class MainWindow(Gtk.Window):
 
     if isinstance(index, str):
       index = ACTIONS_INDEX[index]
-    action = None
+    action = cast(Action, None)
     combo.set_active(index)
 
-    return (action, config_wrap.get_child())
+    return (action, cast(Gtk.Widget, config_wrap.get_child()))
 
-  def trigger_changed(self, combo):
+  def trigger_changed(self, combo: Gtk.ComboBoxText) -> None:
     self.trigger = TRIGGERS[self.trigger_store[combo.get_active()][0]]()
     if child := self.trigger_wrap.get_child():
       child.destroy()
@@ -1052,10 +1081,10 @@ class MainWindow(Gtk.Window):
     self.trigger_wrap.add(child)
     child.show()
 
-  def add_clicked(self, button):
+  def add_clicked(self, button: Gtk.Button) -> None:
     self.add_action(0)
 
-  def import_clicked(self, button):
+  def import_clicked(self, button: Gtk.Button) -> None:
     dialog = Gtk.FileChooserDialog(parent=self, title="导入", action=Gtk.FileChooserAction.OPEN)
     dialog.add_buttons(Gtk.STOCK_OK, Gtk.ResponseType.OK, Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
     filter_json = Gtk.FileFilter()
@@ -1069,21 +1098,21 @@ class MainWindow(Gtk.Window):
     response = dialog.run()
     filename = dialog.get_filename()
     dialog.destroy()
-    if response != Gtk.ResponseType.OK:
+    if response != Gtk.ResponseType.OK or not filename:
       return
     with open(filename, "r") as f:
       data = json.load(f)
     self.trigger_combo.set_active(TRIGGERS_INDEX[data["trigger"][0]])
     self.trigger.deserialize(data["trigger"][1])
-    self.trigger_wrap.get_child().update()
+    cast(Action.ConfigWidget, self.trigger_wrap.get_child()).update()
     self.actions.clear()
     self.action_box.foreach(Gtk.Widget.destroy)
     for (name, config) in data["actions"]:
       action, widget = self.add_action(name)
       action.deserialize(config)
-      widget.update()
+      cast(Action.ConfigWidget, widget).update()
 
-  def export_clicked(self, button):
+  def export_clicked(self, button: Gtk.Button) -> None:
     dialog = Gtk.FileChooserDialog(parent=self, title="导出", action=Gtk.FileChooserAction.SAVE)
     dialog.add_buttons(Gtk.STOCK_OK, Gtk.ResponseType.OK, Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
     filter_json = Gtk.FileFilter()
@@ -1094,15 +1123,15 @@ class MainWindow(Gtk.Window):
     filter_all.add_pattern("*")
     filter_all.set_name("所有文件")
     dialog.add_filter(filter_all)
-    if dialog.run() == Gtk.ResponseType.OK:
-      with open(dialog.get_filename(), "w") as f:
+    if dialog.run() == Gtk.ResponseType.OK and (filename := dialog.get_filename()) is not None:
+      with open(filename, "w") as f:
         json.dump({
           "trigger": [self.trigger.ID, self.trigger.serialize()],
           "actions": [[i.ID, i.serialize()] for i in self.actions]
         }, f)
     dialog.destroy()
 
-  def toggle_clicked(self, button):
+  def toggle_clicked(self, button: Gtk.Button) -> None:
     if self.running:
       self.trigger.stop()
     else:
@@ -1112,14 +1141,14 @@ class MainWindow(Gtk.Window):
       self.import_button.set_sensitive(False)
       self.trigger.start(self.trigger_action, self.trigger_stop)
 
-  def trigger_action(self):
+  def trigger_action(self) -> None:
     for i in self.actions:
       try:
         i.exec()
       except Exception:
         traceback.print_exc()
 
-  def trigger_stop(self):
+  def trigger_stop(self) -> None:
     self.running = False
     self.toggle_button.set_label("开始")
     self.scrolled.set_sensitive(True)
