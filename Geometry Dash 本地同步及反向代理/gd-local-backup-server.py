@@ -247,6 +247,8 @@ class ApiManager:
         self.retry_count = retry_count
         self.retry_4xx = retry_4xx
         self.headers = headers
+        if "skip_auto_headers" not in kw:
+            kw["skip_auto_headers"] = ["User-Agent"]
         self.kw = kw
 
     def __getitem__(self, api: str) -> "ApiCaller":
