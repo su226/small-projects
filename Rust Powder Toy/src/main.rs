@@ -12,6 +12,9 @@ use crate::fps_counter::FpsCounterPlugin;
 
 mod fps_counter;
 
+const SAND_ACCELERATION: f32 = 0.4;
+const SAND_MAX_SPEED: f32 = 8.0;
+
 #[derive(Clone, PartialEq)]
 enum ParticleType {
     Air,
@@ -24,21 +27,22 @@ struct Particle {
     p_type: ParticleType,
     x: u32,
     y: u32,
-    // dx: f32,
-    // dy: f32,
+    dx: f32,
+    dy: f32,
     vx: f32,
     vy: f32,
     color: Color,
     dirty: bool,
+    updated: bool,
 }
 
 const GRID_WIDTH: u32 = 256;
 const GRID_HEIGHT: u32 = 256;
+const BRUSH_SIZE: i32 = 5;
 
 #[derive(Component)]
 struct Grid {
     particles: Vec<Particle>,
-    queue: Vec<u32>,
 }
 
 impl Grid {
@@ -50,18 +54,18 @@ impl Grid {
                     p_type: ParticleType::Air,
                     x,
                     y,
-                    // dx: 0.,
-                    // dy: 0.,
+                    dx: 0.,
+                    dy: 0.,
                     vx: 0.,
                     vy: 0.,
                     color: Color::NONE,
                     dirty: false,
+                    updated: false,
                 });
             }
         }
         Self {
             particles: particles,
-            queue: Vec::new(),
         }
     }
 
@@ -72,14 +76,26 @@ impl Grid {
         Some(&self.particles[(y * GRID_WIDTH + x) as usize])
     }
 
+    fn get_mut(&mut self, x: u32, y: u32) -> Option<&mut Particle> {
+        if x >= GRID_WIDTH || y >= GRID_HEIGHT {
+            return None
+        }
+        Some(&mut self.particles[(y * GRID_WIDTH + x) as usize])
+    }
+
     fn set(&mut self, x: u32, y: u32, p_type: ParticleType) -> bool {
         if x >= GRID_WIDTH || y >= GRID_HEIGHT {
-            return false
+            return false;
         }
         let particle = &mut self.particles[(y * GRID_WIDTH + x) as usize];
+        if particle.p_type == p_type {
+            return false;
+        }
         particle.p_type = p_type;
         particle.vx = 0.;
         particle.vy = 0.;
+        particle.dx = 0.;
+        particle.dy = 0.;
         let mut hsla: Hsla = match particle.p_type {
             ParticleType::Air => Color::NONE,
             ParticleType::Sand => {
@@ -107,60 +123,82 @@ impl Grid {
         self.particles[j].x = x2;
         self.particles[j].y = y2;
         self.particles[j].dirty = true;
-        if !self.queue.is_empty() {
-            self.queue.swap(i, j);
-        }
     }
 
     fn update(&mut self) {
-        let mut queue: Vec<u32> = (0..GRID_WIDTH * GRID_HEIGHT).collect();
+        let total_count = (GRID_WIDTH * GRID_HEIGHT) as usize;
+        let mut queue: Vec<usize> = (0..total_count).collect();
+        for i in queue.iter() {
+            self.particles[*i].updated = false;
+        }
         let mut rng = rand::rng();
         queue.shuffle(&mut rng);
-        self.queue = queue;
-        for i in 0..(GRID_WIDTH * GRID_HEIGHT) as usize {
-            let particle = &self.particles[self.queue[i] as usize];
-            match particle.p_type {
-                ParticleType::Air => {},
-                ParticleType::Sand => {
-                    let move_down = if let Some(down) = self.get(particle.x, particle.y + 1) {
-                        down.p_type == ParticleType::Air
-                    } else {
-                        false
-                    };
-                    if move_down {
-                        self.swap(particle.x, particle.y, particle.x, particle.y + 1);
-                    } else {
-                        let move_downleft = if 
-                            particle.x > 0
-                            && let Some(left) = self.get(particle.x - 1, particle.y)
-                            && let Some(downleft) = self.get(particle.x - 1, particle.y + 1)
-                        {
-                            left.p_type == ParticleType::Air && downleft.p_type == ParticleType::Air
-                        } else {
-                            false
-                        };
-                        let move_downright = if
-                            let Some(right) = self.get(particle.x + 1, particle.y)
-                            && let Some(downright) = self.get(particle.x + 1, particle.y + 1)
-                        {
-                            right.p_type == ParticleType::Air && downright.p_type == ParticleType::Air
-                        } else {
-                            false
-                        };
-                        if move_downleft && move_downright {
-                            if rng.random_bool(0.5) {
-                                self.swap(particle.x, particle.y, particle.x + 1, particle.y + 1);
-                            } else {
-                                self.swap(particle.x, particle.y, particle.x - 1, particle.y + 1);
+        let mut updated_count = 0;
+        while updated_count < total_count {
+            for i in queue.iter() {
+                let particle = &mut self.particles[*i];
+                if particle.updated {
+                    continue;
+                }
+                particle.updated = true;
+                updated_count += 1;
+                match particle.p_type {
+                    ParticleType::Air => {},
+                    ParticleType::Sand => {
+                        let current_x = particle.x;
+                        let mut current_y = particle.y;
+                        if let Some(down) = self.get(current_x, current_y + 1) && down.p_type == ParticleType::Air {
+                            let particle = self.get_mut(current_x, current_y).unwrap();
+                            particle.vy = (particle.vy + SAND_ACCELERATION).min(SAND_MAX_SPEED);
+                            let amount = particle.vy + particle.dy;
+                            for _ in 0..amount as u32 {
+                                if let Some(down) = self.get(current_x, current_y + 1) && down.p_type == ParticleType::Air {
+                                    self.swap(current_x, current_y, current_x, current_y + 1);
+                                    current_y += 1;
+                                } else {
+                                    break;
+                                }
                             }
-                        } else if move_downleft {
-                            self.swap(particle.x, particle.y, particle.x - 1, particle.y + 1);
-                        } else if move_downright {
-                            self.swap(particle.x, particle.y, particle.x + 1, particle.y + 1);
+                            let particle = self.get_mut(current_x, current_y).unwrap();
+                            particle.dy = amount - amount.floor();
+                        } else {
+                            let particle = self.get_mut(current_x, current_y).unwrap();
+                            particle.vy = 0.0;
+                            particle.dy = 0.0;
+                            if let Some(down) = self.get(current_x, current_y + 1) && down.p_type != ParticleType::Air {
+                                let move_downleft = if 
+                                    current_x > 0
+                                    && let Some(left) = self.get(current_x - 1, current_y)
+                                    && let Some(downleft) = self.get(current_x - 1, current_y + 1)
+                                {
+                                    left.p_type == ParticleType::Air && downleft.p_type == ParticleType::Air
+                                } else {
+                                    false
+                                };
+                                let move_downright = if
+                                    let Some(right) = self.get(current_x + 1, current_y)
+                                    && let Some(downright) = self.get(current_x + 1, current_y + 1)
+                                {
+                                    right.p_type == ParticleType::Air && downright.p_type == ParticleType::Air
+                                } else {
+                                    false
+                                };
+                                if move_downleft && move_downright {
+                                    if rng.random_bool(0.5) {
+                                        self.swap(current_x, current_y, current_x - 1, current_y + 1);
+                                    } else {
+                                        self.swap(current_x, current_y, current_x + 1, current_y + 1);
+                                    }
+                                } else if move_downleft {
+                                    self.swap(current_x, current_y, current_x - 1, current_y + 1);
+                                } else if move_downright {
+                                    self.swap(current_x, current_y, current_x + 1, current_y + 1);
+                                }
+                            }
                         }
-                    }
-                },
-                ParticleType::Wood => {},
+                    },
+                    ParticleType::Wood => {},
+                }
             }
         }
     }
@@ -234,11 +272,11 @@ fn render(
         }
     }
     if let PrevMouseCoords(Some((x, y))) = *prev_mouse_coords {
-        for x_offset in -5..=5 {
-            for y_offset in -5..=5 {
+        for x_offset in -BRUSH_SIZE..=BRUSH_SIZE {
+            for y_offset in -BRUSH_SIZE..=BRUSH_SIZE {
                 let x = x as i32 + x_offset;
                 let y = y as i32 + y_offset;
-                if x < 0 || x >= GRID_WIDTH as i32 || y < 0 || y >= GRID_HEIGHT as i32 || (x_offset * x_offset + y_offset * y_offset) > 25 {
+                if x < 0 || x >= GRID_WIDTH as i32 || y < 0 || y >= GRID_HEIGHT as i32 || (x_offset * x_offset + y_offset * y_offset) > BRUSH_SIZE * BRUSH_SIZE {
                     continue;
                 }
                 let x = x as u32;
@@ -250,11 +288,11 @@ fn render(
     }
     let mouse_coords = get_mouse_coords(&window, &transform);
     if let Some((x, y)) = mouse_coords {
-        for x_offset in -5..=5 {
-            for y_offset in -5..=5 {
+        for x_offset in -BRUSH_SIZE..=BRUSH_SIZE {
+            for y_offset in -BRUSH_SIZE..=BRUSH_SIZE {
                 let x = x as i32 + x_offset;
                 let y = y as i32 + y_offset;
-                if x < 0 || x >= GRID_WIDTH as i32 || y < 0 || y >= GRID_HEIGHT as i32 || (x_offset * x_offset + y_offset * y_offset) > 25 {
+                if x < 0 || x >= GRID_WIDTH as i32 || y < 0 || y >= GRID_HEIGHT as i32 || (x_offset * x_offset + y_offset * y_offset) > BRUSH_SIZE * BRUSH_SIZE {
                     continue;
                 }
                 let x = x as u32;
@@ -292,8 +330,8 @@ fn fixed_update(
     let coords = get_mouse_coords(*window, transform);
     let grid = entity.0.as_mut();
     if let Some((x, y)) = coords {
-        for x_offset in -5..=5 {
-            for y_offset in -5..=5 {
+        for x_offset in -BRUSH_SIZE..=BRUSH_SIZE {
+            for y_offset in -BRUSH_SIZE..=BRUSH_SIZE {
                 let x = x as i32 + x_offset;
                 let y = y as i32 + y_offset;
                 if x < 0 || x >= GRID_WIDTH as i32 || y < 0 || y >= GRID_HEIGHT as i32 || (x_offset * x_offset + y_offset * y_offset) > 25 {
