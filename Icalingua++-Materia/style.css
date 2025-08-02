@@ -758,6 +758,10 @@ div.contact-entry-entry {
   background: none;
 }
 
+.vac-box-footer:has(> .vac-media-container) {
+  padding-left: 12px;
+}
+
 .vac-box-footer>.root {
   bottom: 48px;
 }
